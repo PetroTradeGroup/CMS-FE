@@ -1,17 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Banknote, Layers, AlertCircle, CheckCircle2, Plus, Trash2, Scale } from 'lucide-react';
+import { Banknote, Layers, History, AlertCircle, CheckCircle2, Plus, Trash2, Scale } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { generateCoupon, generateBulkCoupons } from '../services/coupons';
-import type { CouponType, DenominationLine } from '../services/coupons';
+import { generateCoupon, generateBulkCoupons, importLegacyCoupon } from '../services/coupons';
+import type { CouponType, BulkDenominationLineInput } from '../services/coupons';
 import { getActiveFuelTypes } from '../services/fuelTypes';
 import type { FuelType } from '../services/fuelTypes';
 import { getDepartments } from '../services/departments';
 import type { Department } from '../services/departments';
+import { getLocations } from '../services/locations';
+import type { LocationDetail } from '../services/locations';
 import { getBulkLimit, getValidityPeriod } from '../services/config';
 import { getErrorMessage } from '../services/api';
 
 interface LineInput {
   denomination: string;
+  books: string;
   count: string;
 }
 
@@ -21,19 +24,23 @@ export const GenerateCoupons: React.FC = () => {
   const navigate = useNavigate();
   const [fuelTypes, setFuelTypes] = useState<FuelType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [locations, setLocations] = useState<LocationDetail[]>([]);
   const [bulkLimit, setBulkLimit] = useState(20000);
   const [defaultValidityDays, setDefaultValidityDays] = useState<number | null>(null);
 
   // Form State
-  const [generationType, setGenerationType] = useState<'single' | 'bulk'>('single');
+  const [generationType, setGenerationType] = useState<'single' | 'bulk' | 'legacy'>('single');
   const [selectedFuelType, setSelectedFuelType] = useState<string>('');
   const [singleDenomination, setSingleDenomination] = useState<string>('20');
   const [targetQuantity, setTargetQuantity] = useState<string>('50');
-  const [lines, setLines] = useState<LineInput[]>([{ denomination: '20', count: '1' }]);
+  const [bulkUnit, setBulkUnit] = useState<'books' | 'count'>('books');
+  const [lines, setLines] = useState<LineInput[]>([{ denomination: '20', books: '1', count: '1' }]);
   const [couponType, setCouponType] = useState<CouponType>('PHYSICAL');
   const [expiryDate, setExpiryDate] = useState<string>('');
   const [departmentId, setDepartmentId] = useState<string>('');
   const [performedBy, setPerformedBy] = useState<string>(() => localStorage.getItem('username') || '');
+  const [legacyCouponNumber, setLegacyCouponNumber] = useState<string>('');
+  const [legacyLocationId, setLegacyLocationId] = useState<string>('');
 
   // Status State
   const [loading, setLoading] = useState(true);
@@ -44,10 +51,11 @@ export const GenerateCoupons: React.FC = () => {
   useEffect(() => {
     const fetchPrerequisites = async () => {
       try {
-        const [ftRes, limitRes, deptRes, validityRes] = await Promise.all([
+        const [ftRes, limitRes, deptRes, locRes, validityRes] = await Promise.all([
           getActiveFuelTypes(0, 100), // Get up to 100 fuel types for the dropdown
           getBulkLimit().catch(() => ({ data: { maxCount: 20000 } })),
           getDepartments(true).catch(() => ({ data: [] as Department[] })),
+          getLocations(true).catch(() => ({ data: [] as LocationDetail[] })),
           getValidityPeriod().catch(() => ({ data: null }))
         ]);
 
@@ -58,6 +66,7 @@ export const GenerateCoupons: React.FC = () => {
         }
         setBulkLimit(limitRes.data?.maxCount || 20000);
         setDepartments(deptRes.data || []);
+        setLocations(locRes.data || []);
         setDefaultValidityDays(validityRes.data?.defaultValidityDays ?? null);
       } catch (err) {
         console.error('Failed to load prerequisites', err);
@@ -70,41 +79,62 @@ export const GenerateCoupons: React.FC = () => {
     fetchPrerequisites();
   }, []);
 
-  // Live breakdown totals for the bulk form
+  // Live breakdown totals for the bulk form. In "books" mode the book→coupon conversion is
+  // server-side, so there's no litres/coupon-count math to mirror here — just tally books and
+  // let the backend derive targetQuantity and enforce the bulk limit.
   const breakdown = useMemo(() => {
     const target = parseFloat(targetQuantity) || 0;
     let litres = 0;
     let coupons = 0;
+    let books = 0;
     let hasInvalidLine = false;
 
     for (const line of lines) {
       const denom = parseFloat(line.denomination);
-      const count = parseInt(line.count, 10);
-      if (!denom || denom <= 0 || !count || count < 1) {
+      if (!denom || denom <= 0) {
         hasInvalidLine = true;
         continue;
       }
-      litres += denom * count;
-      coupons += count;
+      if (bulkUnit === 'books') {
+        const b = parseInt(line.books, 10);
+        if (!b || b < 1) {
+          hasInvalidLine = true;
+          continue;
+        }
+        books += b;
+      } else {
+        const count = parseInt(line.count, 10);
+        if (!count || count < 1) {
+          hasInvalidLine = true;
+          continue;
+        }
+        litres += denom * count;
+        coupons += count;
+      }
+    }
+
+    if (bulkUnit === 'books') {
+      return { target, litres, coupons, books, diff: 0, matched: !hasInvalidLine && books > 0, hasInvalidLine, overLimit: false };
     }
 
     return {
       target,
       litres,
       coupons,
+      books,
       diff: litres - target,
       matched: !hasInvalidLine && target > 0 && litres === target,
       hasInvalidLine,
       overLimit: coupons > bulkLimit
     };
-  }, [lines, targetQuantity, bulkLimit]);
+  }, [lines, targetQuantity, bulkLimit, bulkUnit]);
 
   const updateLine = (index: number, field: keyof LineInput, value: string) => {
     setLines(prev => prev.map((line, i) => (i === index ? { ...line, [field]: value } : line)));
   };
 
   const addLine = (denomination = '') => {
-    setLines(prev => [...prev, { denomination, count: '1' }]);
+    setLines(prev => [...prev, { denomination, books: '1', count: '1' }]);
   };
 
   const removeLine = (index: number) => {
@@ -130,6 +160,42 @@ export const GenerateCoupons: React.FC = () => {
 
     const fuelTypeId = parseInt(selectedFuelType, 10);
 
+    if (generationType === 'legacy') {
+      if (!legacyCouponNumber.trim()) {
+        setError('The coupon\'s existing barcode/number is required.');
+        return;
+      }
+      if (!legacyLocationId) {
+        setError('Select the location this coupon is being registered at.');
+        return;
+      }
+      const denomination = parseFloat(singleDenomination);
+      if (!denomination || denomination <= 0) {
+        setError('Denomination must be a positive number of litres.');
+        return;
+      }
+
+      setGenerating(true);
+      try {
+        const res = await importLegacyCoupon({
+          couponNumber: legacyCouponNumber.trim(),
+          fuelTypeId,
+          denomination,
+          locationId: parseInt(legacyLocationId, 10),
+          ...(departmentId ? { departmentId: parseInt(departmentId, 10) } : {}),
+          ...(expiryDate ? { expiryDate } : {}),
+          ...(performedBy.trim() ? { performedBy: performedBy.trim() } : {})
+        });
+        setSuccess(`Imported legacy coupon ${res.data.couponNumber} — now ALLOCATED.`);
+        setTimeout(() => navigate('/coupons'), 2500);
+      } catch (err) {
+        setError(getErrorMessage(err, 'Failed to import legacy coupon.'));
+      } finally {
+        setGenerating(false);
+      }
+      return;
+    }
+
     if (generationType === 'single') {
       const denomination = parseFloat(singleDenomination);
       if (!denomination || denomination <= 0) {
@@ -151,40 +217,44 @@ export const GenerateCoupons: React.FC = () => {
     }
 
     // Bulk — mirror server-side validation before submitting
-    if (breakdown.target <= 0) {
-      setError('Target quantity must be greater than 0 litres.');
-      return;
-    }
     if (lines.length === 0 || breakdown.hasInvalidLine) {
-      setError('Every denomination line needs a denomination > 0 and a count of at least 1.');
-      return;
-    }
-    if (!breakdown.matched) {
-      const dir = breakdown.diff > 0 ? 'over' : 'under';
-      setError(`Denomination breakdown totals ${breakdown.litres} L but target is ${breakdown.target} L (${dir} by ${Math.abs(breakdown.diff)} L).`);
-      return;
-    }
-    if (breakdown.overLimit) {
-      setError(`Total coupon count (${breakdown.coupons.toLocaleString()}) exceeds the bulk limit of ${bulkLimit.toLocaleString()}.`);
+      setError(`Every denomination line needs a denomination > 0 and a ${bulkUnit === 'books' ? 'book count' : 'count'} of at least 1.`);
       return;
     }
 
-    const requestLines: DenominationLine[] = lines.map(line => ({
+    if (bulkUnit === 'count') {
+      if (breakdown.target <= 0) {
+        setError('Target quantity must be greater than 0 litres.');
+        return;
+      }
+      if (!breakdown.matched) {
+        const dir = breakdown.diff > 0 ? 'over' : 'under';
+        setError(`Denomination breakdown totals ${breakdown.litres} L but target is ${breakdown.target} L (${dir} by ${Math.abs(breakdown.diff)} L).`);
+        return;
+      }
+      if (breakdown.overLimit) {
+        setError(`Total coupon count (${breakdown.coupons.toLocaleString()}) exceeds the bulk limit of ${bulkLimit.toLocaleString()}.`);
+        return;
+      }
+    }
+
+    const requestLines: BulkDenominationLineInput[] = lines.map(line => ({
       denomination: parseFloat(line.denomination),
-      count: parseInt(line.count, 10)
+      ...(bulkUnit === 'books' ? { books: parseInt(line.books, 10) } : { count: parseInt(line.count, 10) })
     }));
 
     setGenerating(true);
     try {
       const res = await generateBulkCoupons({
         fuelTypeId,
-        targetQuantity: breakdown.target,
+        ...(bulkUnit === 'count' ? { targetQuantity: breakdown.target } : {}), // derived server-side in books mode
         lines: requestLines,
         ...buildOptionalFields()
       });
       const batchNumber = res.data[0]?.batchNumber;
       setSuccess(
-        `Successfully generated ${res.data.length} coupons (${breakdown.target} L)` +
+        `Successfully generated ${res.data.length} coupons` +
+        (bulkUnit === 'count' ? ` (${breakdown.target} L)` : ` (${breakdown.books} books)`) +
         (batchNumber ? ` in batch ${batchNumber}.` : '.')
       );
       setTimeout(() => navigate('/coupons'), 3000);
@@ -250,6 +320,14 @@ export const GenerateCoupons: React.FC = () => {
             >
               <Layers size={18} /> Bulk Generation
             </button>
+            <button
+              className={`btn ${generationType === 'legacy' ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ flex: 1 }}
+              onClick={() => setGenerationType('legacy')}
+              type="button"
+            >
+              <History size={18} /> Legacy Import
+            </button>
           </div>
 
           <form onSubmit={handleGenerate}>
@@ -302,18 +380,44 @@ export const GenerateCoupons: React.FC = () => {
 
             {generationType === 'bulk' && (
               <div className="animate-fade-in">
-                <div className="input-group">
-                  <label>Target Quantity (Litres)</label>
-                  <input
-                    type="number"
-                    className="input-field"
-                    min={1}
-                    step="any"
-                    value={targetQuantity}
-                    onChange={(e) => setTargetQuantity(e.target.value)}
-                    required
-                  />
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                  <button
+                    type="button"
+                    className={`btn ${bulkUnit === 'books' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}
+                    onClick={() => setBulkUnit('books')}
+                  >
+                    Books
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn ${bulkUnit === 'count' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}
+                    onClick={() => setBulkUnit('count')}
+                  >
+                    Coupon Count
+                  </button>
                 </div>
+
+                {bulkUnit === 'count' && (
+                  <div className="input-group">
+                    <label>Target Quantity (Litres)</label>
+                    <input
+                      type="number"
+                      className="input-field"
+                      min={1}
+                      step="any"
+                      value={targetQuantity}
+                      onChange={(e) => setTargetQuantity(e.target.value)}
+                      required
+                    />
+                  </div>
+                )}
+                {bulkUnit === 'books' && (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '-0.25rem', marginBottom: '1rem' }}>
+                    Physical batches must form whole books — target quantity is derived from the lines below.
+                  </p>
+                )}
 
                 <div className="input-group">
                   <label>Denomination Breakdown</label>
@@ -331,19 +435,35 @@ export const GenerateCoupons: React.FC = () => {
                         required
                       />
                       <span style={{ color: 'var(--color-text-muted)' }}>×</span>
-                      <input
-                        type="number"
-                        className="input-field"
-                        placeholder="Count"
-                        min={1}
-                        style={{ flex: 1 }}
-                        value={line.count}
-                        onChange={(e) => updateLine(index, 'count', e.target.value)}
-                        required
-                      />
-                      <span style={{ color: 'var(--color-text-muted)', minWidth: '70px', textAlign: 'right', fontSize: '0.9rem' }}>
-                        = {((parseFloat(line.denomination) || 0) * (parseInt(line.count, 10) || 0)).toLocaleString()} L
-                      </span>
+                      {bulkUnit === 'books' ? (
+                        <input
+                          type="number"
+                          className="input-field"
+                          placeholder="Books"
+                          min={1}
+                          step={1}
+                          style={{ flex: 1 }}
+                          value={line.books}
+                          onChange={(e) => updateLine(index, 'books', e.target.value)}
+                          required
+                        />
+                      ) : (
+                        <>
+                          <input
+                            type="number"
+                            className="input-field"
+                            placeholder="Count"
+                            min={1}
+                            style={{ flex: 1 }}
+                            value={line.count}
+                            onChange={(e) => updateLine(index, 'count', e.target.value)}
+                            required
+                          />
+                          <span style={{ color: 'var(--color-text-muted)', minWidth: '70px', textAlign: 'right', fontSize: '0.9rem' }}>
+                            = {((parseFloat(line.denomination) || 0) * (parseInt(line.count, 10) || 0)).toLocaleString()} L
+                          </span>
+                        </>
+                      )}
                       <button
                         type="button"
                         className="btn btn-secondary"
@@ -388,29 +508,97 @@ export const GenerateCoupons: React.FC = () => {
                 }}>
                   <Scale size={20} />
                   <div style={{ fontSize: '0.9rem' }}>
-                    <strong>{breakdown.litres.toLocaleString()} L</strong> across <strong>{breakdown.coupons.toLocaleString()}</strong> coupon{breakdown.coupons === 1 ? '' : 's'}
-                    {breakdown.matched && ' — matches target ✓'}
-                    {!breakdown.matched && breakdown.target > 0 && breakdown.diff !== 0 && (
-                      <> — {breakdown.diff > 0 ? 'over' : 'under'} target by <strong>{Math.abs(breakdown.diff).toLocaleString()} L</strong></>
-                    )}
-                    {breakdown.hasInvalidLine && ' — fix incomplete lines'}
-                    {breakdown.overLimit && (
-                      <> — exceeds bulk limit of {bulkLimit.toLocaleString()} coupons</>
+                    {bulkUnit === 'books' ? (
+                      <>
+                        <strong>{breakdown.books.toLocaleString()}</strong> book{breakdown.books === 1 ? '' : 's'} across {lines.length} line{lines.length === 1 ? '' : 's'}
+                        {breakdown.matched && !breakdown.hasInvalidLine && ' — ready to submit ✓'}
+                        {breakdown.hasInvalidLine && ' — fix incomplete lines'}
+                      </>
+                    ) : (
+                      <>
+                        <strong>{breakdown.litres.toLocaleString()} L</strong> across <strong>{breakdown.coupons.toLocaleString()}</strong> coupon{breakdown.coupons === 1 ? '' : 's'}
+                        {breakdown.matched && ' — matches target ✓'}
+                        {!breakdown.matched && breakdown.target > 0 && breakdown.diff !== 0 && (
+                          <> — {breakdown.diff > 0 ? 'over' : 'under'} target by <strong>{Math.abs(breakdown.diff).toLocaleString()} L</strong></>
+                        )}
+                        {breakdown.hasInvalidLine && ' — fix incomplete lines'}
+                        {breakdown.overLimit && (
+                          <> — exceeds bulk limit of {bulkLimit.toLocaleString()} coupons</>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
               </div>
             )}
 
+            {generationType === 'legacy' && (
+              <div className="animate-fade-in">
+                <div className="input-group">
+                  <label>Coupon Number (existing barcode)</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. OLD-BARCODE-004821"
+                    value={legacyCouponNumber}
+                    onChange={(e) => setLegacyCouponNumber(e.target.value)}
+                    required
+                  />
+                  <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
+                    Used verbatim as the coupon number — not system-generated. Registers directly at
+                    ALLOCATED, skipping generation/receipt. Fails if this number is already registered.
+                  </p>
+                </div>
+
+                <div className="input-group">
+                  <label>Denomination (Litres)</label>
+                  <input
+                    type="number"
+                    className="input-field"
+                    min={1}
+                    step="any"
+                    value={singleDenomination}
+                    onChange={(e) => setSingleDenomination(e.target.value)}
+                    required
+                  />
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                    {COMMON_DENOMINATIONS.map(d => (
+                      <button
+                        key={d}
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}
+                        onClick={() => setSingleDenomination(d.toString())}
+                      >
+                        {d} L
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="input-group">
+                  <label>Location</label>
+                  <select className="input-field" value={legacyLocationId} onChange={(e) => setLegacyLocationId(e.target.value)} required>
+                    <option value="">Select...</option>
+                    {locations.map(l => (
+                      <option key={l.id} value={l.id}>{l.name} ({l.code})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
             {/* Shared optional fields */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div className="input-group">
-                <label>Coupon Type</label>
-                <select className="input-field" value={couponType} onChange={(e) => setCouponType(e.target.value as CouponType)}>
-                  <option value="PHYSICAL">Physical</option>
-                  <option value="DIGITAL">Digital</option>
-                </select>
-              </div>
+              {generationType !== 'legacy' && (
+                <div className="input-group">
+                  <label>Coupon Type</label>
+                  <select className="input-field" value={couponType} onChange={(e) => setCouponType(e.target.value as CouponType)}>
+                    <option value="PHYSICAL">Physical</option>
+                    <option value="DIGITAL">Digital</option>
+                  </select>
+                </div>
+              )}
               <div className="input-group">
                 <label>Expiry Date (optional)</label>
                 <input
@@ -452,7 +640,9 @@ export const GenerateCoupons: React.FC = () => {
                 style={{ width: '100%', padding: '1rem', fontSize: '1.05rem' }}
                 disabled={submitDisabled}
               >
-                {generating ? 'Generating...' : `Generate ${generationType === 'single' ? 'Coupon' : 'Coupons'}`}
+                {generating
+                  ? (generationType === 'legacy' ? 'Importing...' : 'Generating...')
+                  : generationType === 'legacy' ? 'Import Coupon' : `Generate ${generationType === 'single' ? 'Coupon' : 'Coupons'}`}
               </button>
             </div>
           </form>

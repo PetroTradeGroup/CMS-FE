@@ -2,6 +2,7 @@ import { fetchApi, API_BASE_URL } from './api';
 import type { PagedResponse } from './api';
 import type { FuelType, Location, CouponType, CouponStatus, DenominationLine } from './coupons';
 import type { ApprovalRequest } from './approvals';
+import { getAccessToken } from './auth';
 
 export interface CouponBatch {
   id: number;
@@ -102,7 +103,10 @@ export const transferCoupons = (request: TransferRequest) => {
 
 // Binary/stream downloads — bypass fetchApi's JSON envelope and trigger a browser download
 const downloadBatchFile = async (path: string, fallbackFilename: string, errorLabel: string) => {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
 
   if (!response.ok) {
     let message = errorLabel;

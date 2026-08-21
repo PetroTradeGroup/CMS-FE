@@ -29,3 +29,7 @@ dist-ssr
 *.pdf
 *.log
 .claude/settings.local.json
+
+/_bmad
+/_bmad-output
+/.claude

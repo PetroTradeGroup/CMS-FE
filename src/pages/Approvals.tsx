@@ -352,7 +352,7 @@ export const Approvals: React.FC = () => {
                 <strong>Coupons:</strong> {detailRequest.count.toLocaleString()}
                 {detailRequest.denominations.length > 0 && (
                   <span style={{ color: 'var(--color-text-muted)' }}>
-                    {' '}({detailRequest.denominations.map(d => `${d.count}×${d.denomination}L`).join(', ')})
+                    {' '}({detailRequest.denominations.map(d => `${d.count}×${d.denomination}L${d.books != null ? ` (${d.books} bk)` : ''}`).join(', ')})
                   </span>
                 )}
               </div>

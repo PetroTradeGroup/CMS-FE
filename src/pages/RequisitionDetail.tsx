@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, AlertCircle, CheckCircle2, X, PackageCheck, Ban } from 'lucide-react';
+import { ArrowLeft, AlertCircle, CheckCircle2, X, PackageCheck, Ban, Zap } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
-import { getRequisition, fulfillRequisition, rejectRequisition } from '../services/requisitions';
+import { getRequisition, fulfillRequisition, rejectRequisition, autoFulfillRequisition } from '../services/requisitions';
 import type { Requisition } from '../services/requisitions';
 import { getBatches } from '../services/batches';
 import type { CouponBatch } from '../services/batches';
@@ -27,7 +27,9 @@ interface FulfillLineInput {
   fuelTypeId: number;
   fuelTypeName: string;
   denomination: number;
+  outstandingBooks: number;
   outstandingLitres: number;
+  books: string; // editable — defaults to outstandingBooks, clamped by the user
   litres: string; // editable — defaults to outstandingLitres, clamped by the user
 }
 
@@ -44,6 +46,7 @@ export const RequisitionDetail: React.FC = () => {
   const [showFulfill, setShowFulfill] = useState(false);
   const [batches, setBatches] = useState<CouponBatch[]>([]);
   const [batchId, setBatchId] = useState('');
+  const [fulfillUnit, setFulfillUnit] = useState<'books' | 'litres'>('books');
   const [fulfillLines, setFulfillLines] = useState<FulfillLineInput[]>([]);
   const [fulfillStatus, setFulfillStatus] = useState<CouponStatus | ''>('');
   const [fulfillReason, setFulfillReason] = useState('');
@@ -57,6 +60,14 @@ export const RequisitionDetail: React.FC = () => {
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
   const [rejectError, setRejectError] = useState<string | null>(null);
+
+  // Auto-fulfill modal
+  const [showAutoFulfill, setShowAutoFulfill] = useState(false);
+  const [autoFulfillBy, setAutoFulfillBy] = useState<string>(() => localStorage.getItem('username') || '');
+  const [autoFulfillReason, setAutoFulfillReason] = useState('');
+  const [autoFulfillTargetStatus, setAutoFulfillTargetStatus] = useState<CouponStatus | ''>('');
+  const [autoFulfilling, setAutoFulfilling] = useState(false);
+  const [autoFulfillError, setAutoFulfillError] = useState<string | null>(null);
 
   const loadRequisition = useCallback(async () => {
     try {
@@ -81,6 +92,7 @@ export const RequisitionDetail: React.FC = () => {
   const openFulfill = () => {
     if (!requisition) return;
     setBatchId('');
+    setFulfillUnit('books');
     setFulfillLines(
       requisition.lines
         .filter(l => l.outstandingLitres > 0)
@@ -88,7 +100,9 @@ export const RequisitionDetail: React.FC = () => {
           fuelTypeId: l.fuelType.id,
           fuelTypeName: l.fuelType.name,
           denomination: l.denomination,
+          outstandingBooks: l.outstandingBooks,
           outstandingLitres: l.outstandingLitres,
+          books: l.outstandingBooks.toString(),
           litres: l.outstandingLitres.toString()
         }))
     );
@@ -105,8 +119,8 @@ export const RequisitionDetail: React.FC = () => {
       .catch(() => setBatches([]));
   };
 
-  const updateFulfillLine = (index: number, litres: string) => {
-    setFulfillLines(prev => prev.map((l, i) => (i === index ? { ...l, litres } : l)));
+  const updateFulfillLine = (index: number, field: 'books' | 'litres', value: string) => {
+    setFulfillLines(prev => prev.map((l, i) => (i === index ? { ...l, [field]: value } : l)));
   };
 
   const selectedBatch = batches.find(b => String(b.id) === batchId);
@@ -126,20 +140,26 @@ export const RequisitionDetail: React.FC = () => {
     // lines of a different fuel type stay outstanding for a fulfill against a different batch.
     const linesToSend = fulfillLines
       .filter(l => l.fuelTypeId === selectedBatch.fuelType.id)
-      .map(l => ({ fuelTypeId: l.fuelTypeId, denomination: l.denomination, litres: parseFloat(l.litres) || 0, outstandingLitres: l.outstandingLitres }))
-      .filter(l => l.litres > 0);
+      .map(l => ({
+        fuelTypeId: l.fuelTypeId,
+        denomination: l.denomination,
+        amount: fulfillUnit === 'books' ? (parseInt(l.books, 10) || 0) : (parseFloat(l.litres) || 0),
+        outstanding: fulfillUnit === 'books' ? l.outstandingBooks : l.outstandingLitres
+      }))
+      .filter(l => l.amount > 0);
 
+    const unitLabel = fulfillUnit === 'books' ? 'books' : 'L';
     if (linesToSend.length === 0) {
-      setFulfillError(`Enter litres to issue on at least one ${selectedBatch.fuelType.name} line.`);
+      setFulfillError(`Enter ${fulfillUnit === 'books' ? 'books' : 'litres'} to issue on at least one ${selectedBatch.fuelType.name} line.`);
       return;
     }
     for (const l of linesToSend) {
-      if (l.litres > l.outstandingLitres) {
-        setFulfillError(`Cannot issue ${l.litres} L of ${l.denomination} L coupons — only ${l.outstandingLitres} L outstanding.`);
+      if (l.amount > l.outstanding) {
+        setFulfillError(`Cannot issue ${l.amount} ${unitLabel} of ${l.denomination} L coupons — only ${l.outstanding} ${unitLabel} outstanding.`);
         return;
       }
-      if (l.litres % l.denomination !== 0) {
-        setFulfillError(`${l.litres} L doesn't divide evenly into ${l.denomination} L coupons.`);
+      if (fulfillUnit === 'litres' && l.amount % l.denomination !== 0) {
+        setFulfillError(`${l.amount} L doesn't divide evenly into ${l.denomination} L coupons.`);
         return;
       }
     }
@@ -149,7 +169,11 @@ export const RequisitionDetail: React.FC = () => {
     try {
       const res = await fulfillRequisition(requisition.id, {
         batchId: parseInt(batchId, 10),
-        lines: linesToSend.map(({ fuelTypeId, denomination, litres }) => ({ fuelTypeId, denomination, litres })),
+        lines: linesToSend.map(({ fuelTypeId, denomination, amount }) => ({
+          fuelTypeId,
+          denomination,
+          ...(fulfillUnit === 'books' ? { books: amount } : { litres: amount })
+        })),
         ...(fulfillStatus ? { targetStatus: fulfillStatus } : {}),
         ...(fulfillReason.trim() ? { reason: fulfillReason.trim() } : {}),
         performedBy: performedBy.trim()
@@ -174,6 +198,42 @@ export const RequisitionDetail: React.FC = () => {
     setRejectReason('');
     setRejectError(null);
     setShowReject(true);
+  };
+
+  const openAutoFulfill = () => {
+    setAutoFulfillReason('');
+    setAutoFulfillTargetStatus('');
+    setAutoFulfillError(null);
+    setShowAutoFulfill(true);
+  };
+
+  const handleAutoFulfill = async () => {
+    if (!requisition) return;
+    if (!autoFulfillBy.trim()) {
+      setAutoFulfillError('Your name is required.');
+      return;
+    }
+
+    setAutoFulfilling(true);
+    setAutoFulfillError(null);
+    try {
+      const res = await autoFulfillRequisition(requisition.id, {
+        performedBy: autoFulfillBy.trim(),
+        ...(autoFulfillReason.trim() ? { reason: autoFulfillReason.trim() } : {}),
+        ...(autoFulfillTargetStatus ? { targetStatus: autoFulfillTargetStatus } : {})
+      });
+      const transferCount = res.data.transfers?.length || 0;
+      setSuccess(
+        `Auto-fulfill planned ${transferCount} transfer${transferCount === 1 ? '' : 's'} across the outstanding lines` +
+        ' — each waits in Approvals like a manual fulfill.'
+      );
+      setShowAutoFulfill(false);
+      await loadRequisition();
+    } catch (err) {
+      setAutoFulfillError(getErrorMessage(err, 'Failed to auto-fulfil requisition.'));
+    } finally {
+      setAutoFulfilling(false);
+    }
   };
 
   const handleReject = async () => {
@@ -237,7 +297,10 @@ export const RequisitionDetail: React.FC = () => {
         </div>
         {isOpenForAction(requisition.status) && (
           <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-            <button className="btn btn-primary" onClick={openFulfill}>
+            <button className="btn btn-primary" onClick={openAutoFulfill}>
+              <Zap size={18} /> Auto Fulfill
+            </button>
+            <button className="btn btn-secondary" onClick={openFulfill}>
               <PackageCheck size={18} /> Fulfill
             </button>
             <button className="btn btn-secondary" style={{ color: 'var(--color-accent-red)' }} onClick={openReject}>
@@ -311,9 +374,9 @@ export const RequisitionDetail: React.FC = () => {
                   <tr key={i}>
                     <td>{line.fuelType?.name ?? '—'}</td>
                     <td>{line.denomination} L</td>
-                    <td>{line.requestedLitres.toLocaleString()} L</td>
-                    <td>{line.fulfilledLitres.toLocaleString()} L</td>
-                    <td>{line.outstandingLitres.toLocaleString()} L</td>
+                    <td>{line.requestedBooks.toLocaleString()} books <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>({line.requestedLitres.toLocaleString()} L)</span></td>
+                    <td>{line.fulfilledBooks.toLocaleString()} books <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>({line.fulfilledLitres.toLocaleString()} L)</span></td>
+                    <td>{line.outstandingBooks.toLocaleString()} books <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>({line.outstandingLitres.toLocaleString()} L)</span></td>
                     <td style={{ minWidth: '140px' }}>
                       <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: '6px', height: '8px', overflow: 'hidden' }}>
                         <div style={{ width: `${pct}%`, background: pct >= 100 ? '#4ade80' : 'var(--color-accent-gold)', height: '100%' }} />
@@ -362,11 +425,33 @@ export const RequisitionDetail: React.FC = () => {
           </div>
 
           <div className="input-group">
-            <label>Litres to issue now, per line</label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <label style={{ marginBottom: 0 }}>Issue now, per line</label>
+              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                <button
+                  type="button"
+                  className={`btn ${fulfillUnit === 'books' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ padding: '0.25rem 0.7rem', fontSize: '0.75rem' }}
+                  onClick={() => setFulfillUnit('books')}
+                >
+                  Books
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${fulfillUnit === 'litres' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ padding: '0.25rem 0.7rem', fontSize: '0.75rem' }}
+                  onClick={() => setFulfillUnit('litres')}
+                >
+                  Litres
+                </button>
+              </div>
+            </div>
             {fulfillLines.length === 0 ? (
               <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Nothing outstanding on this requisition.</p>
             ) : fulfillLines.map((line, index) => {
               const mismatched = !!selectedBatch && line.fuelTypeId !== selectedBatch.fuelType.id;
+              const outstanding = fulfillUnit === 'books' ? line.outstandingBooks : line.outstandingLitres;
+              const unitLabel = fulfillUnit === 'books' ? 'books' : 'L';
               return (
                 <div key={`${line.fuelTypeId}-${line.denomination}`} style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.6rem', opacity: mismatched ? 0.5 : 1 }}>
                   <span style={{ minWidth: '150px', fontSize: '0.9rem' }}>{line.fuelTypeName} · {line.denomination} L</span>
@@ -374,14 +459,14 @@ export const RequisitionDetail: React.FC = () => {
                     type="number"
                     className="input-field"
                     min={0}
-                    max={line.outstandingLitres}
-                    step={line.denomination}
-                    value={line.litres}
-                    onChange={(e) => updateFulfillLine(index, e.target.value)}
+                    max={outstanding}
+                    step={fulfillUnit === 'books' ? 1 : line.denomination}
+                    value={fulfillUnit === 'books' ? line.books : line.litres}
+                    onChange={(e) => updateFulfillLine(index, fulfillUnit, e.target.value)}
                     disabled={mismatched}
                   />
                   <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', minWidth: '150px' }}>
-                    {mismatched ? 'different fuel type' : `of ${line.outstandingLitres} L outstanding`}
+                    {mismatched ? 'different fuel type' : `of ${outstanding} ${unitLabel} outstanding`}
                   </span>
                 </div>
               );
@@ -424,6 +509,57 @@ export const RequisitionDetail: React.FC = () => {
               {fulfilling ? 'Submitting...' : 'Issue Coupons'}
             </button>
             <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowFulfill(false)} disabled={fulfilling}>
+              Cancel
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Auto-fulfill modal */}
+      {showAutoFulfill && (
+        <Modal onClose={() => setShowAutoFulfill(false)}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <h3 style={{ margin: 0, color: 'var(--color-accent-gold)' }}>Auto Fulfill Requisition #{requisition.id}</h3>
+            <button className="btn btn-secondary" style={{ padding: '0.3rem 0.5rem' }} onClick={() => setShowAutoFulfill(false)}>
+              <X size={16} />
+            </button>
+          </div>
+
+          {autoFulfillError && (
+            <div style={{ padding: '0.75rem 1rem', background: 'rgba(208, 76, 87, 0.1)', border: '1px solid var(--color-accent-red)', borderRadius: '8px', color: 'var(--color-accent-red)', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
+              {autoFulfillError}
+            </div>
+          )}
+
+          <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '1.25rem' }}>
+            Plans the whole requisition against its outstanding lines automatically, walking each fuel
+            type's batches oldest-first — no batch or line picking needed. Always defers for approval,
+            one transfer per batch drawn.
+          </p>
+
+          <div className="input-group">
+            <label>Target Status (optional)</label>
+            <select className="input-field" value={autoFulfillTargetStatus} onChange={(e) => setAutoFulfillTargetStatus(e.target.value as CouponStatus | '')}>
+              <option value="">Keep current status</option>
+              {COUPON_STATUSES.map(s => (
+                <option key={s} value={s}>{s.replace('_', ' ')}</option>
+              ))}
+            </select>
+          </div>
+          <div className="input-group">
+            <label>Performed By</label>
+            <input className="input-field" value={autoFulfillBy} onChange={(e) => setAutoFulfillBy(e.target.value)} required />
+          </div>
+          <div className="input-group">
+            <label>Reason (optional)</label>
+            <input className="input-field" value={autoFulfillReason} onChange={(e) => setAutoFulfillReason(e.target.value)} maxLength={255} placeholder="Recorded in the audit trail" />
+          </div>
+
+          <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAutoFulfill} disabled={autoFulfilling}>
+              {autoFulfilling ? 'Planning...' : 'Auto Fulfill'}
+            </button>
+            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowAutoFulfill(false)} disabled={autoFulfilling}>
               Cancel
             </button>
           </div>

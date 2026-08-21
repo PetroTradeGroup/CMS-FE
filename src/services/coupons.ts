@@ -45,6 +45,7 @@ export interface Coupon {
   department: Department | null;
   batchNumber: string | null;
   batchSequence: number | null;
+  bookNumber: number | null;
   createdAt: string;
 }
 
@@ -85,15 +86,29 @@ export interface GenerateCouponRequest {
   performedBy?: string;
 }
 
+// The general breakdown shape returned in denomination summaries (ApprovalRequest.denominations,
+// RedemptionRequest.denominations, ...). count/denomination are always populated; books/litres are
+// the computed equivalents added alongside them — optional here only so this type still fits the
+// handful of older request-side call sites that predate books and only ever set count.
 export interface DenominationLine {
   denomination: number;
   count: number;
+  books?: number; // added alongside litres on approval/redemption denomination breakdowns
+  litres?: number;
+}
+
+// A bulk-generation input line: specify a denomination plus either a book count (preferred, must
+// form whole books for physical coupons) or a raw coupon count — not both.
+export interface BulkDenominationLineInput {
+  denomination: number;
+  books?: number;
+  count?: number;
 }
 
 export interface BulkGenerateRequest {
   fuelTypeId: number;
-  targetQuantity: number; // total litres ordered
-  lines: DenominationLine[]; // Σ (denomination × count) must equal targetQuantity
+  targetQuantity?: number; // total litres ordered — derived from lines when omitted
+  lines: BulkDenominationLineInput[]; // Σ (denomination × count) must equal targetQuantity when both are given
   locationId?: number;
   departmentId?: number;
   couponType?: CouponType;
@@ -110,6 +125,25 @@ export const generateCoupon = (request: GenerateCouponRequest) => {
 
 export const generateBulkCoupons = (request: BulkGenerateRequest) => {
   return fetchApi<Coupon[]>('/coupons/generate/bulk', {
+    method: 'POST',
+    body: JSON.stringify(request)
+  });
+};
+
+export interface LegacyImportRequest {
+  couponNumber: string; // the pre-existing barcode value, used verbatim — not system-generated
+  fuelTypeId: number;
+  denomination: number;
+  locationId: number;
+  departmentId?: number;
+  expiryDate?: string | null;
+  performedBy?: string;
+}
+
+// Registers a coupon that predates the system directly at ALLOCATED, skipping generation/receipt
+// entirely. 400s if couponNumber is already registered.
+export const importLegacyCoupon = (request: LegacyImportRequest) => {
+  return fetchApi<Coupon>('/coupons/legacy-import', {
     method: 'POST',
     body: JSON.stringify(request)
   });

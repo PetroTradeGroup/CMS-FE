@@ -186,6 +186,7 @@ export const Coupons: React.FC = () => {
         'Status': c.status,
         'Batch': c.batchNumber || '',
         'Batch Sequence': c.batchSequence ?? '',
+        'Book Number': c.bookNumber ?? '',
         'Created At': new Date(c.createdAt).toLocaleString()
       })));
       const wb = XLSX.utils.book_new();
@@ -443,6 +444,7 @@ export const Coupons: React.FC = () => {
                   <th>Denomination</th>
                   <th>Status</th>
                   <th>Batch</th>
+                  <th>Book</th>
                   <th>Created At</th>
                 </tr>
               </thead>
@@ -475,6 +477,9 @@ export const Coupons: React.FC = () => {
                     </td>
                     <td style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
                       {coupon.batchNumber ? `${coupon.batchNumber} #${coupon.batchSequence ?? '—'}` : '—'}
+                    </td>
+                    <td style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+                      {coupon.bookNumber ?? '—'}
                     </td>
                     <td style={{ color: 'var(--color-text-muted)' }}>
                       {new Date(coupon.createdAt).toLocaleString()}

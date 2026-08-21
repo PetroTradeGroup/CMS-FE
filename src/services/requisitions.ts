@@ -16,6 +16,9 @@ export interface RequisitionLine {
   requestedLitres: number;
   fulfilledLitres: number;
   outstandingLitres: number;
+  requestedBooks: number;
+  fulfilledBooks: number;
+  outstandingBooks: number;
 }
 
 export interface Requisition {
@@ -34,14 +37,15 @@ export interface Requisition {
 export interface RequisitionLineRequest {
   fuelTypeId: number;
   denomination: number;
-  litres: number;
+  books?: number; // preferred; on creation must be a whole-book multiple if litres is used instead
+  litres?: number; // fulfill doesn't force this to a book multiple, so odd legacy balances can drain
 }
 
 export interface CreateRequisitionRequest {
   departmentId: number;
   locationId: number;
   requestedBy: string;
-  lines: RequisitionLineRequest[]; // litres per (fuel type, denomination) — no two lines may repeat the same pair
+  lines: RequisitionLineRequest[]; // books (preferred) or litres per (fuel type, denomination) — no two lines may repeat the same pair
 }
 
 export const createRequisition = (request: CreateRequisitionRequest) => {
@@ -63,9 +67,8 @@ export const getRequisition = (id: number) => {
 
 export interface FulfillRequisitionRequest {
   batchId: number; // a batch is always a single fuel type — every line here must match its fuel type
-  lines: RequisitionLineRequest[]; // litres issued now per (fuel type, denomination); must not exceed
-  // outstandingLitres and must divide evenly by the denomination (Stock is converting litres to a
-  // coupon count under the hood)
+  lines: RequisitionLineRequest[]; // books or litres issued now per (fuel type, denomination); must
+  // not exceed outstandingBooks/outstandingLitres (litres must still divide evenly by the denomination)
   targetStatus?: CouponStatus;
   reason?: string;
   performedBy: string;
@@ -90,5 +93,28 @@ export const rejectRequisition = (id: number, decidedBy: string, reason: string)
   return fetchApi<Requisition>(`/requisitions/${id}/reject`, {
     method: 'POST',
     body: JSON.stringify({ decidedBy, reason })
+  });
+};
+
+export interface AutoFulfillRequisitionRequest {
+  performedBy: string;
+  reason?: string;
+  targetStatus?: CouponStatus;
+}
+
+// Response shape is a best guess pending a real payload to confirm against — the requisition's
+// updated state plus one deferred transfer per batch it drew from.
+export interface AutoFulfillResult {
+  requisition: Requisition;
+  transfers: ApprovalRequest[];
+}
+
+// Plans the whole requisition against its outstanding lines, walking each fuel type's batches
+// oldest-first. Always 202 — one deferred transfer per batch drawn, same approval flow as a manual
+// fulfill (see Approvals). No batch/line picking needed on the FE.
+export const autoFulfillRequisition = (id: number, request: AutoFulfillRequisitionRequest) => {
+  return fetchApi<AutoFulfillResult>(`/requisitions/${id}/auto-fulfill`, {
+    method: 'POST',
+    body: JSON.stringify(request)
   });
 };

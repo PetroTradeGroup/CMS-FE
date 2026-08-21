@@ -12,6 +12,9 @@ import { Departments } from './pages/Departments';
 import { Approvals } from './pages/Approvals';
 import { Requisitions } from './pages/Requisitions';
 import { RequisitionDetail } from './pages/RequisitionDetail';
+import { Redemptions } from './pages/Redemptions';
+import { RedemptionScan } from './pages/RedemptionScan';
+import { ErpSales } from './pages/ErpSales';
 import { Settings } from './pages/Settings';
 import { AiAssistant } from './pages/AiAssistant';
 
@@ -30,6 +33,9 @@ const App: React.FC = () => {
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/requisitions" element={<Requisitions />} />
           <Route path="/requisitions/:id" element={<RequisitionDetail />} />
+          <Route path="/redemptions" element={<Redemptions />} />
+          <Route path="/redemptions/scan" element={<RedemptionScan />} />
+          <Route path="/erp-sales" element={<ErpSales />} />
           <Route path="/fuel-types" element={<FuelTypesManager />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/ai" element={<AiAssistant />} />

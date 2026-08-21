@@ -32,6 +32,7 @@ const requisitionBadge = (status: RequisitionStatus) => {
 interface LineInput {
   fuelTypeId: string;
   denomination: string;
+  books: string;
   litres: string;
 }
 
@@ -56,7 +57,8 @@ export const Requisitions: React.FC = () => {
   const [departmentId, setDepartmentId] = useState('');
   const [locationId, setLocationId] = useState('');
   const [requestedBy, setRequestedBy] = useState<string>(() => localStorage.getItem('username') || '');
-  const [lines, setLines] = useState<LineInput[]>([{ fuelTypeId: '', denomination: '', litres: '' }]);
+  const [unit, setUnit] = useState<'books' | 'litres'>('books');
+  const [lines, setLines] = useState<LineInput[]>([{ fuelTypeId: '', denomination: '', books: '', litres: '' }]);
   const [creating, setCreating] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -95,7 +97,7 @@ export const Requisitions: React.FC = () => {
   const openCreate = async () => {
     setDepartmentId('');
     setLocationId('');
-    setLines([{ fuelTypeId: fuelTypes[0]?.id.toString() || '', denomination: '', litres: '' }]);
+    setLines([{ fuelTypeId: fuelTypes[0]?.id.toString() || '', denomination: '', books: '', litres: '' }]);
     setModalError(null);
     setShowCreate(true);
     if (departments.length === 0) {
@@ -114,7 +116,7 @@ export const Requisitions: React.FC = () => {
   };
 
   const addLine = (denomination = '') => {
-    setLines(prev => [...prev, { fuelTypeId: fuelTypes[0]?.id.toString() || '', denomination, litres: '' }]);
+    setLines(prev => [...prev, { fuelTypeId: fuelTypes[0]?.id.toString() || '', denomination, books: '', litres: '' }]);
   };
 
   const removeLine = (index: number) => {
@@ -130,20 +132,25 @@ export const Requisitions: React.FC = () => {
       setModalError('Requested by is required.');
       return;
     }
-    if (lines.some(l => !l.fuelTypeId || !l.denomination.trim() || !l.litres.trim())) {
-      setModalError('Every line needs a fuel type, a denomination, and a litres amount.');
+    const amountField = unit === 'books' ? 'books' : 'litres';
+    if (lines.some(l => !l.fuelTypeId || !l.denomination.trim() || !l[amountField].trim())) {
+      setModalError(`Every line needs a fuel type, a denomination, and a ${unit === 'books' ? 'book count' : 'litres amount'}.`);
       return;
     }
     const parsedLines: RequisitionLineRequest[] = lines.map(l => ({
       fuelTypeId: parseInt(l.fuelTypeId, 10),
       denomination: parseFloat(l.denomination),
-      litres: parseFloat(l.litres)
+      ...(unit === 'books' ? { books: parseInt(l.books, 10) } : { litres: parseFloat(l.litres) })
     }));
     if (parsedLines.some(l => !l.denomination || l.denomination <= 0)) {
       setModalError('Denominations must be positive numbers of litres.');
       return;
     }
-    if (parsedLines.some(l => !l.litres || l.litres <= 0)) {
+    if (unit === 'books' && parsedLines.some(l => !l.books || l.books <= 0)) {
+      setModalError('Books must be a whole number greater than 0 on every line.');
+      return;
+    }
+    if (unit === 'litres' && parsedLines.some(l => !l.litres || l.litres <= 0)) {
       setModalError('Litres must be greater than 0 on every line.');
       return;
     }
@@ -174,6 +181,8 @@ export const Requisitions: React.FC = () => {
 
   const totalLitres = (req: Requisition) => req.lines.reduce((sum, l) => sum + l.requestedLitres, 0);
   const outstandingLitres = (req: Requisition) => req.lines.reduce((sum, l) => sum + l.outstandingLitres, 0);
+  const totalBooks = (req: Requisition) => req.lines.reduce((sum, l) => sum + l.requestedBooks, 0);
+  const outstandingBooks = (req: Requisition) => req.lines.reduce((sum, l) => sum + l.outstandingBooks, 0);
 
   return (
     <div className="animate-fade-in">
@@ -222,8 +231,8 @@ export const Requisitions: React.FC = () => {
                   <th>#</th>
                   <th>Department</th>
                   <th>Location</th>
-                  <th>Requested (L)</th>
-                  <th>Outstanding (L)</th>
+                  <th>Requested (Books)</th>
+                  <th>Outstanding (Books)</th>
                   <th>Requested By</th>
                   <th>Requested At</th>
                   <th>Status</th>
@@ -235,8 +244,8 @@ export const Requisitions: React.FC = () => {
                     <td style={{ color: 'var(--color-accent-gold)', fontWeight: 600 }}>{req.id}</td>
                     <td>{req.department?.name ?? '—'}</td>
                     <td>{req.location?.name ?? '—'}</td>
-                    <td>{totalLitres(req).toLocaleString()} L</td>
-                    <td>{outstandingLitres(req).toLocaleString()} L</td>
+                    <td>{totalBooks(req).toLocaleString()} <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>({totalLitres(req).toLocaleString()} L)</span></td>
+                    <td>{outstandingBooks(req).toLocaleString()} <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>({outstandingLitres(req).toLocaleString()} L)</span></td>
                     <td>{req.requestedBy}</td>
                     <td style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
                       {new Date(req.requestedAt).toLocaleString()}
@@ -316,7 +325,30 @@ export const Requisitions: React.FC = () => {
           </div>
 
           <div className="input-group">
-            <label>Lines (litres per fuel type and denomination)</label>
+            <label>Lines (books or litres per fuel type and denomination)</label>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <button
+                type="button"
+                className={`btn ${unit === 'books' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}
+                onClick={() => setUnit('books')}
+              >
+                Books
+              </button>
+              <button
+                type="button"
+                className={`btn ${unit === 'litres' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}
+                onClick={() => setUnit('litres')}
+              >
+                Litres
+              </button>
+            </div>
+            {unit === 'litres' && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '-0.4rem', marginBottom: '0.75rem' }}>
+                Litres must be a whole-book multiple of the denomination — books is preferred.
+              </p>
+            )}
             {fuelTypes.length === 0 && (
               <p style={{ color: 'var(--color-accent-red)', fontSize: '0.8rem', marginTop: '-0.25rem', marginBottom: '0.75rem' }}>
                 No active fuel types found. Activate one in Fuel Types management before raising a requisition.
@@ -345,15 +377,27 @@ export const Requisitions: React.FC = () => {
                   onChange={(e) => updateLine(index, 'denomination', e.target.value)}
                 />
                 <span style={{ color: 'var(--color-text-muted)' }}>×</span>
-                <input
-                  type="number"
-                  className="input-field"
-                  placeholder="Litres"
-                  min={1}
-                  step="any"
-                  value={line.litres}
-                  onChange={(e) => updateLine(index, 'litres', e.target.value)}
-                />
+                {unit === 'books' ? (
+                  <input
+                    type="number"
+                    className="input-field"
+                    placeholder="Books"
+                    min={1}
+                    step={1}
+                    value={line.books}
+                    onChange={(e) => updateLine(index, 'books', e.target.value)}
+                  />
+                ) : (
+                  <input
+                    type="number"
+                    className="input-field"
+                    placeholder="Litres"
+                    min={1}
+                    step="any"
+                    value={line.litres}
+                    onChange={(e) => updateLine(index, 'litres', e.target.value)}
+                  />
+                )}
                 <button
                   type="button"
                   className="btn btn-secondary"

@@ -2,19 +2,29 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogIn } from 'lucide-react';
 import logo from '../assets/logo.jpg';
+import { login } from '../services/auth';
+import { getErrorMessage } from '../services/api';
 
 export const Login: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Simulate login for now
-    if (username && password) {
+    setError('');
+    setLoading(true);
+    try {
+      await login(username, password);
       // Persisted so generation forms can default the performedBy audit field
       localStorage.setItem('username', username);
       navigate('/dashboard');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Invalid username or password'));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -104,9 +114,15 @@ export const Login: React.FC = () => {
             />
           </div>
 
-          <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '0.875rem', fontSize: '1rem' }}>
+          {error && (
+            <p style={{ color: '#e05555', fontSize: '0.85rem', marginBottom: '1rem', textAlign: 'center' }}>
+              {error}
+            </p>
+          )}
+
+          <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', padding: '0.875rem', fontSize: '1rem' }}>
             <LogIn size={20} />
-            Sign In
+            {loading ? 'Signing In…' : 'Sign In'}
           </button>
         </form>
         

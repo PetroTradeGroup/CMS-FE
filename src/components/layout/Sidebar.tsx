@@ -1,14 +1,17 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Banknote, Settings, LogOut, Database, ChevronLeft, ChevronRight, Sparkles, Package, Building2, ClipboardCheck, ClipboardList } from 'lucide-react';
+import { LayoutDashboard, Banknote, Settings, LogOut, Database, ChevronLeft, ChevronRight, Sparkles, Package, Building2, ClipboardCheck, ClipboardList, Receipt, ShoppingCart } from 'lucide-react';
 import logo from '../../assets/logo.jpg';
+import { logout } from '../../services/auth';
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/coupons', label: 'Coupons', icon: Banknote },
   { to: '/batches', label: 'Batches', icon: Package },
   { to: '/requisitions', label: 'Requisitions', icon: ClipboardList },
+  { to: '/redemptions', label: 'Redemptions', icon: Receipt },
   { to: '/approvals', label: 'Approvals', icon: ClipboardCheck },
+  { to: '/erp-sales', label: 'ERP Sales', icon: ShoppingCart },
   { to: '/departments', label: 'Departments', icon: Building2 },
   { to: '/fuel-types', label: 'Fuel Types', icon: Database },
   { to: '/ai', label: 'Report', icon: Sparkles },
@@ -24,6 +27,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
   const navigate = useNavigate();
 
   const handleLogout = () => {
+    logout();
     navigate('/');
   };
 
