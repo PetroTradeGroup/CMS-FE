@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Banknote, Layers, History, AlertCircle, CheckCircle2, Plus, Trash2, Scale } from 'lucide-react';
+import { Banknote, Layers, History, FileSpreadsheet, AlertCircle, CheckCircle2, Plus, Trash2, Scale } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { generateCoupon, generateBulkCoupons, importLegacyCoupon } from '../services/coupons';
-import type { CouponType, BulkDenominationLineInput } from '../services/coupons';
+import { generateCoupon, generateBulkCoupons, importLegacyCoupon, importLegacyCouponsBulk } from '../services/coupons';
+import type { CouponType, BulkDenominationLineInput, LegacyBulkImportResult } from '../services/coupons';
 import { getActiveFuelTypes } from '../services/fuelTypes';
 import type { FuelType } from '../services/fuelTypes';
 import { getDepartments } from '../services/departments';
@@ -29,7 +29,7 @@ export const GenerateCoupons: React.FC = () => {
   const [defaultValidityDays, setDefaultValidityDays] = useState<number | null>(null);
 
   // Form State
-  const [generationType, setGenerationType] = useState<'single' | 'bulk' | 'legacy'>('single');
+  const [generationType, setGenerationType] = useState<'single' | 'bulk' | 'legacy' | 'legacyBulk'>('single');
   const [selectedFuelType, setSelectedFuelType] = useState<string>('');
   const [singleDenomination, setSingleDenomination] = useState<string>('20');
   const [targetQuantity, setTargetQuantity] = useState<string>('50');
@@ -41,12 +41,15 @@ export const GenerateCoupons: React.FC = () => {
   const [performedBy, setPerformedBy] = useState<string>(() => localStorage.getItem('username') || '');
   const [legacyCouponNumber, setLegacyCouponNumber] = useState<string>('');
   const [legacyLocationId, setLegacyLocationId] = useState<string>('');
+  const [legacyBulkFile, setLegacyBulkFile] = useState<File | null>(null);
+  const [legacyBulkDryRun, setLegacyBulkDryRun] = useState(false);
 
   // Status State
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [bulkImportResult, setBulkImportResult] = useState<LegacyBulkImportResult | null>(null);
 
   useEffect(() => {
     const fetchPrerequisites = async () => {
@@ -150,13 +153,36 @@ export const GenerateCoupons: React.FC = () => {
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFuelType) {
+    // Fuel type is per-row in a bulk legacy spreadsheet (fuelTypeCode column) — not selected here.
+    if (generationType !== 'legacyBulk' && !selectedFuelType) {
       setError('Please select a fuel type.');
       return;
     }
 
     setError(null);
     setSuccess(null);
+    setBulkImportResult(null);
+
+    if (generationType === 'legacyBulk') {
+      if (!legacyBulkFile) {
+        setError('Choose an .xlsx file to import.');
+        return;
+      }
+      setGenerating(true);
+      try {
+        const res = await importLegacyCouponsBulk(legacyBulkFile, {
+          dryRun: legacyBulkDryRun,
+          performedBy: performedBy.trim() || undefined
+        });
+        setBulkImportResult(res.data);
+        setSuccess(res.message || `${res.data.succeeded} of ${res.data.totalRows} row(s) registered`);
+      } catch (err) {
+        setError(getErrorMessage(err, 'Failed to import the spreadsheet.'));
+      } finally {
+        setGenerating(false);
+      }
+      return;
+    }
 
     const fuelTypeId = parseInt(selectedFuelType, 10);
 
@@ -275,8 +301,9 @@ export const GenerateCoupons: React.FC = () => {
 
   const submitDisabled =
     generating ||
-    fuelTypes.length === 0 ||
-    (generationType === 'bulk' && (!breakdown.matched || breakdown.overLimit));
+    (generationType !== 'legacyBulk' && fuelTypes.length === 0) ||
+    (generationType === 'bulk' && (!breakdown.matched || breakdown.overLimit)) ||
+    (generationType === 'legacyBulk' && !legacyBulkFile);
 
   return (
     <div className="animate-fade-in">
@@ -300,6 +327,47 @@ export const GenerateCoupons: React.FC = () => {
             <div style={{ padding: '1rem', background: 'rgba(74, 222, 128, 0.1)', border: '1px solid #4ade80', borderRadius: '8px', color: '#4ade80', marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <CheckCircle2 size={20} />
               {success}
+            </div>
+          )}
+
+          {generationType === 'legacyBulk' && bulkImportResult && (
+            <div className="glass-panel" style={{ padding: '1.5rem', marginBottom: '2rem', background: 'rgba(0,0,0,0.2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--color-accent-gold)' }}>
+                  Import Result {bulkImportResult.dryRun && <span className="badge badge-warning" style={{ marginLeft: '0.5rem' }}>DRY RUN</span>}
+                </h3>
+                <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                  {bulkImportResult.succeeded} succeeded · {bulkImportResult.failed} failed · {bulkImportResult.totalRows} total
+                </span>
+              </div>
+              {bulkImportResult.results.length > 0 && (
+                <div className="table-container" style={{ maxHeight: '360px', overflowY: 'auto' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Row</th>
+                        <th>Coupon Number</th>
+                        <th>Result</th>
+                        <th>Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bulkImportResult.results.map(r => (
+                        <tr key={r.row}>
+                          <td style={{ color: 'var(--color-text-muted)' }}>{r.row}</td>
+                          <td style={{ fontFamily: 'monospace' }}>{r.couponNumber}</td>
+                          <td>
+                            <span className={`badge ${r.success ? 'badge-success' : 'badge-danger'}`}>
+                              {r.success ? 'OK' : 'Failed'}
+                            </span>
+                          </td>
+                          <td style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>{r.reason || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
@@ -328,27 +396,37 @@ export const GenerateCoupons: React.FC = () => {
             >
               <History size={18} /> Legacy Import
             </button>
+            <button
+              className={`btn ${generationType === 'legacyBulk' ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ flex: 1 }}
+              onClick={() => setGenerationType('legacyBulk')}
+              type="button"
+            >
+              <FileSpreadsheet size={18} /> Bulk Legacy Import
+            </button>
           </div>
 
           <form onSubmit={handleGenerate}>
-            <div className="input-group">
-              <label>Fuel Type</label>
-              <select
-                className="input-field"
-                value={selectedFuelType}
-                onChange={(e) => setSelectedFuelType(e.target.value)}
-                required
-              >
-                {fuelTypes.map(ft => (
-                  <option key={ft.id} value={ft.id}>{ft.name} ({ft.typeCode})</option>
-                ))}
-              </select>
-              {fuelTypes.length === 0 && (
-                <p style={{ color: 'var(--color-accent-red)', fontSize: '0.8rem', marginTop: '0.5rem' }}>
-                  No active fuel types found. Please activate one in Fuel Types management.
-                </p>
-              )}
-            </div>
+            {generationType !== 'legacyBulk' && (
+              <div className="input-group">
+                <label>Fuel Type</label>
+                <select
+                  className="input-field"
+                  value={selectedFuelType}
+                  onChange={(e) => setSelectedFuelType(e.target.value)}
+                  required
+                >
+                  {fuelTypes.map(ft => (
+                    <option key={ft.id} value={ft.id}>{ft.name} ({ft.typeCode})</option>
+                  ))}
+                </select>
+                {fuelTypes.length === 0 && (
+                  <p style={{ color: 'var(--color-accent-red)', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                    No active fuel types found. Please activate one in Fuel Types management.
+                  </p>
+                )}
+              </div>
+            )}
 
             {generationType === 'single' && (
               <div className="input-group animate-fade-in">
@@ -588,9 +666,40 @@ export const GenerateCoupons: React.FC = () => {
               </div>
             )}
 
+            {generationType === 'legacyBulk' && (
+              <div className="animate-fade-in">
+                <div className="input-group">
+                  <label>Spreadsheet (.xlsx)</label>
+                  <input
+                    type="file"
+                    accept=".xlsx"
+                    className="input-field"
+                    onChange={(e) => setLegacyBulkFile(e.target.files?.[0] ?? null)}
+                    required
+                  />
+                  <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
+                    Header row required, columns in order: couponNumber, fuelTypeCode, denomination,
+                    locationCode (optional → HQ), departmentCode (optional → Stocks), expiryDate
+                    (optional, yyyy-MM-dd → system default). Each row registers directly at ALLOCATED,
+                    same as a single legacy import — failures never block the rest of the file.
+                  </p>
+                </div>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--color-text-secondary)', cursor: 'pointer', marginBottom: '1.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={legacyBulkDryRun}
+                    onChange={(e) => setLegacyBulkDryRun(e.target.checked)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  Dry run — validate the whole file without registering anything
+                </label>
+              </div>
+            )}
+
             {/* Shared optional fields */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              {generationType !== 'legacy' && (
+              {generationType !== 'legacy' && generationType !== 'legacyBulk' && (
                 <div className="input-group">
                   <label>Coupon Type</label>
                   <select className="input-field" value={couponType} onChange={(e) => setCouponType(e.target.value as CouponType)}>
@@ -599,28 +708,32 @@ export const GenerateCoupons: React.FC = () => {
                   </select>
                 </div>
               )}
-              <div className="input-group">
-                <label>Expiry Date (optional)</label>
-                <input
-                  type="date"
-                  className="input-field"
-                  value={expiryDate}
-                  onChange={(e) => setExpiryDate(e.target.value)}
-                />
-                <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
-                  Leave blank to use the system default
-                  {defaultValidityDays != null ? ` (${defaultValidityDays} days from creation)` : ''} — configurable in Settings.
-                </p>
-              </div>
-              <div className="input-group">
-                <label>Department (optional)</label>
-                <select className="input-field" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-                  <option value="">Default (Stocks)</option>
-                  {departments.map(d => (
-                    <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
-                  ))}
-                </select>
-              </div>
+              {generationType !== 'legacyBulk' && (
+                <div className="input-group">
+                  <label>Expiry Date (optional)</label>
+                  <input
+                    type="date"
+                    className="input-field"
+                    value={expiryDate}
+                    onChange={(e) => setExpiryDate(e.target.value)}
+                  />
+                  <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
+                    Leave blank to use the system default
+                    {defaultValidityDays != null ? ` (${defaultValidityDays} days from creation)` : ''} — configurable in Settings.
+                  </p>
+                </div>
+              )}
+              {generationType !== 'legacyBulk' && (
+                <div className="input-group">
+                  <label>Department (optional)</label>
+                  <select className="input-field" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+                    <option value="">Default (Stocks)</option>
+                    {departments.map(d => (
+                      <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="input-group">
                 <label>Performed By (optional)</label>
                 <input
@@ -641,8 +754,10 @@ export const GenerateCoupons: React.FC = () => {
                 disabled={submitDisabled}
               >
                 {generating
-                  ? (generationType === 'legacy' ? 'Importing...' : 'Generating...')
-                  : generationType === 'legacy' ? 'Import Coupon' : `Generate ${generationType === 'single' ? 'Coupon' : 'Coupons'}`}
+                  ? (generationType === 'legacy' || generationType === 'legacyBulk' ? 'Importing...' : 'Generating...')
+                  : generationType === 'legacy' ? 'Import Coupon'
+                  : generationType === 'legacyBulk' ? (legacyBulkDryRun ? 'Validate File (Dry Run)' : 'Import Spreadsheet')
+                  : `Generate ${generationType === 'single' ? 'Coupon' : 'Coupons'}`}
               </button>
             </div>
           </form>

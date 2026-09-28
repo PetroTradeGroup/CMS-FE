@@ -1,31 +1,21 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { LogIn } from 'lucide-react';
 import logo from '../assets/logo.jpg';
-import { login } from '../services/auth';
-import { getErrorMessage } from '../services/api';
+import { login, isAuthenticated } from '../services/auth';
 
 export const Login: React.FC = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
+  // Already signed in (silent check-sso succeeded) — skip the landing page.
+  if (isAuthenticated()) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  const handleLogin = () => {
     setLoading(true);
-    try {
-      await login(username, password);
-      // Persisted so generation forms can default the performedBy audit field
-      localStorage.setItem('username', username);
-      navigate('/dashboard');
-    } catch (err) {
-      setError(getErrorMessage(err, 'Invalid username or password'));
-    } finally {
-      setLoading(false);
-    }
+    // Redirects to the Keycloak login page (Authorization Code + PKCE).
+    login();
   };
 
   return (
@@ -87,45 +77,21 @@ export const Login: React.FC = () => {
           <p style={{ color: 'var(--color-accent-gold)', fontWeight: 500, letterSpacing: '0.05em', textTransform: 'uppercase', fontSize: '0.8rem' }}>Coupon System</p>
         </div>
 
-        <form onSubmit={handleLogin}>
-          <div className="input-group">
-            <label htmlFor="username">Username</label>
-            <input
-              type="text"
-              id="username"
-              className="input-field"
-              placeholder="Enter your username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-            />
-          </div>
-          
-          <div className="input-group" style={{ marginBottom: '2rem' }}>
-            <label htmlFor="password">Password</label>
-            <input
-              type="password"
-              id="password"
-              className="input-field"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </div>
+        <p style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.9rem', marginBottom: '2rem' }}>
+          Sign in with your Petrotrade account to continue.
+        </p>
 
-          {error && (
-            <p style={{ color: '#e05555', fontSize: '0.85rem', marginBottom: '1rem', textAlign: 'center' }}>
-              {error}
-            </p>
-          )}
+        <button
+          type="button"
+          onClick={handleLogin}
+          className="btn btn-primary"
+          disabled={loading}
+          style={{ width: '100%', padding: '0.875rem', fontSize: '1rem' }}
+        >
+          <LogIn size={20} />
+          {loading ? 'Redirecting…' : 'Sign In'}
+        </button>
 
-          <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', padding: '0.875rem', fontSize: '1rem' }}>
-            <LogIn size={20} />
-            {loading ? 'Signing In…' : 'Sign In'}
-          </button>
-        </form>
-        
         <div style={{ marginTop: '2rem', textAlign: 'center' }}>
           <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', margin: 0 }}>
             All rights reserved &copy; {new Date().getFullYear()} Petrotrade

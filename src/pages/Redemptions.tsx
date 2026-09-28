@@ -1,10 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Receipt, AlertCircle, CheckCircle2, X, QrCode } from 'lucide-react';
+import { Receipt, AlertCircle, CheckCircle2, X, QrCode, BarChart3, Building2, User, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getRedemptions, postRedemption } from '../services/redemptions';
 import type { RedemptionRequest, RedemptionStatus } from '../services/redemptions';
+import { getLocations } from '../services/locations';
+import type { LocationDetail } from '../services/locations';
 import { ApiError, getErrorMessage } from '../services/api';
+import { hasRole, getLocationCode } from '../services/auth';
 import { Modal } from '../components/Modal';
+import { VerifyCouponModal } from '../components/VerifyCouponModal';
 
 const STATUS_TABS: { label: string; value: RedemptionStatus | '' }[] = [
   { label: 'Pending', value: 'PENDING' },
@@ -21,18 +25,47 @@ const describeCoupons = (req: RedemptionRequest) => {
 };
 
 export const Redemptions: React.FC = () => {
+  // The backend scopes this list by the caller's token: an Attendant sees only redemptions they
+  // submitted at their station; a Team Leader sees every redemption at their station; Admin/Stocks
+  // see all sites. This banner just makes that scope visible — it isn't what enforces it.
+  // An Admin isn't bound to a station (no locationCode claim), so they may narrow the list to one
+  // site via the picker below; everyone else is locked to their own station server-side.
+  const stationCode = getLocationCode();
+  const isTeamLeader = hasRole('TEAM_LEADER');
+  const canPickSite = hasRole('ADMIN') && !stationCode;
+
   const [requests, setRequests] = useState<RedemptionRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   const [statusTab, setStatusTab] = useState<RedemptionStatus | ''>('PENDING');
+  const [locationId, setLocationId] = useState<number | ''>('');
+  const [sites, setSites] = useState<LocationDetail[]>([]);
   const [page, setPage] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
 
+  const scopeLabel = stationCode
+    ? isTeamLeader
+      ? `All redemptions at ${stationCode} — every attendant`
+      : `Your redemptions at ${stationCode}`
+    : canPickSite && locationId
+      ? sites.find((s) => s.id === Number(locationId))?.name ?? 'Selected site'
+      : 'All sites';
+
+  // Only Admin gets the picker — pull the active sites once for it.
+  useEffect(() => {
+    if (!canPickSite) return;
+    getLocations(true).then((res) => setSites(res.data || [])).catch(() => setSites([]));
+  }, [canPickSite]);
+
   // Detail modal (read-only view opened by clicking a row)
   const [detailRequest, setDetailRequest] = useState<RedemptionRequest | null>(null);
+
+  // Verify Coupon modal — a standalone lookup against /redemptions/scan and
+  // /redemptions/scan/{couponNumber}, independent of the row list above.
+  const [verifyOpen, setVerifyOpen] = useState(false);
 
   // Post modal
   const [selected, setSelected] = useState<RedemptionRequest | null>(null);
@@ -45,7 +78,12 @@ export const Redemptions: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await getRedemptions(page, 20, statusTab || undefined);
+      const res = await getRedemptions(
+        page,
+        20,
+        statusTab || undefined,
+        canPickSite && locationId ? Number(locationId) : undefined,
+      );
       setRequests(res.data?.content || []);
       setTotalPages(res.data?.totalPages || 0);
       setTotalElements(res.data?.totalElements || 0);
@@ -54,7 +92,7 @@ export const Redemptions: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, statusTab]);
+  }, [page, statusTab, canPickSite, locationId]);
 
   useEffect(() => {
     loadRequests();
@@ -62,7 +100,7 @@ export const Redemptions: React.FC = () => {
 
   useEffect(() => {
     setPage(0);
-  }, [statusTab]);
+  }, [statusTab, locationId]);
 
   // Redemptions now auto-post to the ERP in the background after submit, so a PENDING row can
   // flip to POSTED without anyone touching this page — poll quietly while any are visible. Manual
@@ -71,7 +109,7 @@ export const Redemptions: React.FC = () => {
   useEffect(() => {
     if (!hasPending) return;
     const interval = setInterval(() => {
-      getRedemptions(page, 20, statusTab || undefined)
+      getRedemptions(page, 20, statusTab || undefined, canPickSite && locationId ? Number(locationId) : undefined)
         .then(res => {
           setRequests(res.data?.content || []);
           setTotalPages(res.data?.totalPages || 0);
@@ -80,7 +118,7 @@ export const Redemptions: React.FC = () => {
         .catch(() => { /* silent — retried on the next tick */ });
     }, 10000);
     return () => clearInterval(interval);
-  }, [hasPending, page, statusTab]);
+  }, [hasPending, page, statusTab, canPickSite, locationId]);
 
   const openDetail = (req: RedemptionRequest) => setDetailRequest(req);
   const closeDetail = () => setDetailRequest(null);
@@ -133,9 +171,29 @@ export const Redemptions: React.FC = () => {
           <h1>Redemptions</h1>
           <p style={{ margin: 0 }}>Coupons submitted for redemption wait here until the coupon section posts them against an ERP document.</p>
         </div>
-        <Link to="/redemptions/scan" className="btn btn-primary">
-          <QrCode size={18} /> Scan &amp; Redeem
-        </Link>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <button className="btn btn-secondary" onClick={() => setVerifyOpen(true)}>
+            <ShieldCheck size={18} /> Verify Coupon
+          </button>
+          <Link to="/redemptions/summary" className="btn btn-secondary">
+            <BarChart3 size={18} /> Summary
+          </Link>
+          {/* Redeeming is Attendant / Team Leader only — the backend 403s everyone else. */}
+          {hasRole('ATTENDANT', 'TEAM_LEADER') && (
+            <Link to="/redemptions/scan" className="btn btn-primary">
+              <QrCode size={18} /> Scan &amp; Redeem
+            </Link>
+          )}
+        </div>
+      </div>
+
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem',
+        padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--color-border)',
+        borderRadius: '8px', color: 'var(--color-text-secondary)', fontSize: '0.9rem',
+      }}>
+        {stationCode && !isTeamLeader ? <User size={16} /> : <Building2 size={16} />}
+        <span>Showing: <strong>{scopeLabel}</strong></span>
       </div>
 
       {error && (
@@ -149,7 +207,7 @@ export const Redemptions: React.FC = () => {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
         {STATUS_TABS.map(tab => (
           <button
             key={tab.label}
@@ -164,6 +222,20 @@ export const Redemptions: React.FC = () => {
           <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
             Auto-refreshing while pending redemptions post to the ERP...
           </span>
+        )}
+        {canPickSite && (
+          <select
+            className="input-field"
+            style={{ width: 'auto', marginLeft: 'auto', padding: '0.4rem 0.6rem', fontSize: '0.85rem' }}
+            value={locationId}
+            onChange={(e) => setLocationId(e.target.value ? Number(e.target.value) : '')}
+            aria-label="Filter redemptions by site"
+          >
+            <option value="">All sites</option>
+            {sites.map((s) => (
+              <option key={s.id} value={s.id}>{s.code} — {s.name}</option>
+            ))}
+          </select>
         )}
       </div>
 
@@ -276,6 +348,7 @@ export const Redemptions: React.FC = () => {
               </div>
             )}
             <div><strong>Site:</strong> {detailRequest.toLocation?.name ?? '—'} ({detailRequest.toLocation?.code ?? '—'})</div>
+            <div><strong>Vehicle:</strong> {detailRequest.carRegistrationNumber || '—'}</div>
             <div><strong>Requested by:</strong> {detailRequest.requestedBy} on {new Date(detailRequest.requestedAt).toLocaleString()}</div>
             {detailRequest.status === 'POSTED' && (
               <>
@@ -312,6 +385,7 @@ export const Redemptions: React.FC = () => {
           <div style={{ fontSize: '0.9rem', marginBottom: '1.5rem', color: 'var(--color-text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
             <div><strong>Coupons:</strong> {selected.count} — <span style={{ fontFamily: 'monospace' }}>{describeCoupons(selected)}</span></div>
             <div><strong>Site:</strong> {selected.toLocation?.name ?? '—'}</div>
+            <div><strong>Vehicle:</strong> {selected.carRegistrationNumber || '—'}</div>
             <div><strong>Requested by:</strong> {selected.requestedBy} on {new Date(selected.requestedAt).toLocaleString()}</div>
           </div>
 
@@ -344,6 +418,8 @@ export const Redemptions: React.FC = () => {
           </div>
         </Modal>
       )}
+
+      {verifyOpen && <VerifyCouponModal onClose={() => setVerifyOpen(false)} />}
     </div>
   );
 };

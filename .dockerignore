@@ -1,0 +1,18 @@
+node_modules
+dist
+dist-ssr
+.git
+
+# Editor/AI tooling — irrelevant inside the image, and .claude in particular can hold local secrets
+.claude
+_bmad
+_bmad-output
+.vscode
+.idea
+
+*.md
+!README.md
+*.log
+.env
+.env.*
+!.env.example

@@ -205,6 +205,28 @@ select.input-field option {
   color: white;
 }
 
+/* Date inputs: the native calendar icon is dark and near-invisible on the dark field, which
+   left only the spin arrows visible. Recolour it, enlarge its hit area, and drop the steppers
+   so the field reads as "open a calendar", not "nudge a number". */
+.input-field[type="date"] {
+  cursor: pointer;
+}
+.input-field[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: 0.55;
+  cursor: pointer;
+  padding: 0.25rem;
+  margin-left: 0.25rem;
+  transition: opacity 0.2s ease;
+}
+.input-field[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+.input-field[type="date"]::-webkit-inner-spin-button,
+.input-field[type="date"]::-webkit-clear-button {
+  display: none;
+}
+
 /* Tables */
 .table-container {
   width: 100%;

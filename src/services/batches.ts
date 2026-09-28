@@ -7,6 +7,7 @@ import { getAccessToken } from './auth';
 export interface CouponBatch {
   id: number;
   batchNumber: string;
+  sequenceNumber: number; // running number per fuel type — batch 1, 2, 3… ("Batch 47")
   fuelType: FuelType;
   couponType: CouponType;
   quantity: number; // coupon unit count
@@ -25,6 +26,7 @@ export interface BatchFilters {
   dateFrom?: string;
   dateTo?: string;
   hasStock?: boolean; // opt-in — true restricts to batches with at least one IN_STOCK coupon
+  batchNumber?: string; // partial, case-insensitive; matches anywhere in the number. Server-side.
 }
 
 const batchFilterQuery = (filters?: BatchFilters) => {
@@ -36,6 +38,7 @@ const batchFilterQuery = (filters?: BatchFilters) => {
     if (filters.dateFrom) query += `&dateFrom=${filters.dateFrom}`;
     if (filters.dateTo) query += `&dateTo=${filters.dateTo}`;
     if (filters.hasStock) query += `&hasStock=true`;
+    if (filters.batchNumber) query += `&batchNumber=${encodeURIComponent(filters.batchNumber.trim())}`;
   }
   return query;
 };

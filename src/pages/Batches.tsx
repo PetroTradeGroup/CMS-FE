@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Package, Filter, FileSpreadsheet, FileText } from 'lucide-react';
+import { Package, Filter, FileSpreadsheet, FileText, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getBatches, exportBatches } from '../services/batches';
 import type { CouponBatch, BatchFilters } from '../services/batches';
@@ -26,6 +26,14 @@ export const Batches: React.FC = () => {
   const [dateTo, setDateTo] = useState('');
   const [hasStockFilter, setHasStockFilter] = useState(false);
 
+  // Batch number search is a server-side filter (partial, case-insensitive) — debounce the typing
+  const [searchTerm, setSearchTerm] = useState('');
+  const [batchNumberFilter, setBatchNumberFilter] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setBatchNumberFilter(searchTerm.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
   const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null);
 
   const currentFilters = (): BatchFilters => ({
@@ -33,7 +41,8 @@ export const Batches: React.FC = () => {
     couponType: couponTypeFilter || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
-    hasStock: hasStockFilter || undefined
+    hasStock: hasStockFilter || undefined,
+    batchNumber: batchNumberFilter || undefined
   });
 
   const handleExport = async (format: 'excel' | 'pdf') => {
@@ -50,7 +59,7 @@ export const Batches: React.FC = () => {
 
   useEffect(() => {
     setPage(0);
-  }, [fuelTypeFilter, couponTypeFilter, dateFrom, dateTo, hasStockFilter]);
+  }, [fuelTypeFilter, couponTypeFilter, dateFrom, dateTo, hasStockFilter, batchNumberFilter]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -75,7 +84,7 @@ export const Batches: React.FC = () => {
 
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, fuelTypeFilter, couponTypeFilter, dateFrom, dateTo, hasStockFilter]);
+  }, [page, fuelTypeFilter, couponTypeFilter, dateFrom, dateTo, hasStockFilter, batchNumberFilter]);
 
   if (loading && batches.length === 0) {
     return (
@@ -116,6 +125,23 @@ export const Batches: React.FC = () => {
 
       <div className="glass-panel" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div className="input-group" style={{ width: '240px', marginBottom: 0 }}>
+            <label style={{ fontSize: '0.8rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Batch Number</label>
+            <div style={{ position: 'relative' }}>
+              <div style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }}>
+                <Search size={16} />
+              </div>
+              <input
+                type="text"
+                className="input-field"
+                placeholder="BAT-... (partial)"
+                style={{ paddingLeft: '2.5rem' }}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
+
           <div className="input-group" style={{ width: '180px', marginBottom: 0 }}>
             <label style={{ fontSize: '0.8rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Fuel Type</label>
             <select className="input-field" value={fuelTypeFilter} onChange={(e) => setFuelTypeFilter(e.target.value)}>
@@ -187,6 +213,7 @@ export const Batches: React.FC = () => {
               <thead>
                 <tr>
                   <th>Batch Number</th>
+                  <th title="The batch's running number for its fuel type">Seq</th>
                   <th>Fuel Type</th>
                   <th>Type</th>
                   <th>Coupons</th>
@@ -205,6 +232,9 @@ export const Batches: React.FC = () => {
                   >
                     <td style={{ fontWeight: 500, color: 'var(--color-accent-gold)', letterSpacing: '0.03em' }}>
                       {batch.batchNumber}
+                    </td>
+                    <td style={{ color: 'var(--color-text-muted)' }}>
+                      {batch.sequenceNumber != null ? `#${batch.sequenceNumber}` : '—'}
                     </td>
                     <td>{batch.fuelType?.name ?? '—'}</td>
                     <td>

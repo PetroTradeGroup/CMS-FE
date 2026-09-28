@@ -3,7 +3,7 @@ import { ArrowLeft, QrCode, PackageCheck, AlertCircle, CheckCircle2, ArrowRightL
 import { Link, useParams } from 'react-router-dom';
 import { getBatch, receiveBatch, downloadBatchQrCodes, downloadBatchPrintCsv, transferCoupons } from '../services/batches';
 import type { CouponBatch, TransferResult } from '../services/batches';
-import { getStatusBadgeClass, COUPON_STATUSES, getCoupons, formatDenomination } from '../services/coupons';
+import { getStatusBadgeClass, COUPON_STATUSES, getCoupons, formatDenomination, getOriginBadgeClass, formatOrigin } from '../services/coupons';
 import type { CouponStatus, Coupon, DenominationLine } from '../services/coupons';
 import { getLocations } from '../services/locations';
 import type { LocationDetail } from '../services/locations';
@@ -257,6 +257,7 @@ export const BatchDetail: React.FC = () => {
 
   const headerFields: [string, React.ReactNode][] = [
     ['Fuel Type', batch.fuelType ? `${batch.fuelType.name} (${batch.fuelType.typeCode})` : '—'],
+    ['Batch Sequence', batch.sequenceNumber != null ? `#${batch.sequenceNumber} for ${batch.fuelType?.name ?? 'fuel type'}` : '—'],
     ['Coupon Type', batch.couponType],
     ['Coupons', batch.quantity?.toLocaleString()],
     ['Target Quantity', batch.targetQuantity ? `${batch.targetQuantity.toLocaleString()} L` : '—'],
@@ -367,6 +368,7 @@ export const BatchDetail: React.FC = () => {
                     <th>Coupon Number</th>
                     <th>Denomination</th>
                     <th>Status</th>
+                    <th>Origin</th>
                     <th>Location</th>
                     <th>Department</th>
                   </tr>
@@ -382,6 +384,11 @@ export const BatchDetail: React.FC = () => {
                       <td>
                         <span className={`badge ${getStatusBadgeClass(coupon.status)}`}>
                           {coupon.status.replace('_', ' ')}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`badge ${getOriginBadgeClass(coupon.origin)}`}>
+                          {formatOrigin(coupon.origin)}
                         </span>
                       </td>
                       <td>{coupon.location?.name ?? '—'}</td>

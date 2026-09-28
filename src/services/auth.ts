@@ -1,86 +1,49 @@
-const KEYCLOAK_URL = 'http://localhost:8189';
-const REALM = 'petrotrade';
-const CLIENT_ID = 'coupon-backend';
+import { keycloak } from './keycloak';
 
-const TOKEN_ENDPOINT = `${KEYCLOAK_URL}/realms/${REALM}/protocol/openid-connect/token`;
+// Auth is delegated to Keycloak via the Authorization Code + proof-key flow (see ./keycloak.ts).
+// This module keeps the small, mostly-synchronous surface the rest of the app already consumes
+// (getAccessToken / isAuthenticated / refreshAccessToken / logout).
 
-const ACCESS_TOKEN_KEY = 'access_token';
-const REFRESH_TOKEN_KEY = 'refresh_token';
+// Redirects the browser to the Keycloak login page. Returns a never-resolving promise because
+// the page navigates away.
+export const login = (): Promise<void> =>
+  keycloak.login({ redirectUri: `${window.location.origin}/dashboard` });
 
-interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
-}
-
-export const login = async (username: string, password: string): Promise<void> => {
-  const response = await fetch(TOKEN_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'password',
-      client_id: CLIENT_ID,
-      username,
-      password,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error('Invalid username or password');
-  }
-
-  const data: TokenResponse = await response.json();
-  localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
-  localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
-};
-
-// Keycloak refresh tokens are single-use (rotated on every refresh), so two 401s that land at
-// the same time — e.g. StrictMode's double effect firing two requests off an expired access
-// token — must not each start their own refresh: the second would present an already-invalidated
-// token and fail, forcing a bogus logout even though the first refresh succeeded. Share one
-// in-flight refresh across concurrent callers instead.
-let refreshPromise: Promise<boolean> | null = null;
-
-// Called by fetchApi on a 401 to silently retry once before forcing a re-login
-export const refreshAccessToken = (): Promise<boolean> => {
-  if (refreshPromise) return refreshPromise;
-
-  refreshPromise = (async () => {
-    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-    if (!refreshToken) return false;
-
-    try {
-      const response = await fetch(TOKEN_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          client_id: CLIENT_ID,
-          refresh_token: refreshToken,
-        }),
-      });
-
-      if (!response.ok) return false;
-
-      const data: TokenResponse = await response.json();
-      localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
-      localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
-      return true;
-    } catch {
-      return false;
-    } finally {
-      refreshPromise = null;
-    }
-  })();
-
-  return refreshPromise;
-};
-
-export const logout = (): void => {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+export const logout = (): Promise<void> => {
   localStorage.removeItem('username');
+  return keycloak.logout({ redirectUri: `${window.location.origin}/` });
 };
 
-export const getAccessToken = (): string | null => localStorage.getItem(ACCESS_TOKEN_KEY);
+export const getAccessToken = (): string | null => keycloak.token ?? null;
 
-export const isAuthenticated = (): boolean => !!getAccessToken();
+export const isAuthenticated = (): boolean => !!keycloak.authenticated;
+
+// True when the current token carries any of the given roles, as either a realm role or a
+// client role on the coupon-backend client. Server-side checks are still authoritative — this
+// only drives what the UI bothers to show.
+export const hasRole = (...roles: string[]): boolean =>
+  roles.some((role) => keycloak.hasRealmRole(role) || keycloak.hasResourceRole(role));
+
+// The Keycloak username (preferred_username claim) — the value the backend records as
+// requestedBy / performedBy and scopes an Attendant's own view by.
+export const getUsername = (): string | null =>
+  (keycloak.tokenParsed?.preferred_username as string | undefined) ?? null;
+
+// The station a retail caller (Attendant/Team Leader) is tied to, stamped on the token as the
+// `locationCode` claim. Null for non-retail callers (Admin/Stocks), who aren't bound to one
+// site — the backend lets them assert a site explicitly, everyone else is locked to this one.
+export const getLocationCode = (): string | null =>
+  (keycloak.tokenParsed?.locationCode as string | undefined) ?? null;
+
+// Called by fetchApi on a 401 to silently obtain a fresh access token before forcing a
+// re-login. keycloak-js serializes concurrent updateToken() calls internally, so racing
+// callers (e.g. StrictMode's double effect) share one refresh. Passing -1 forces a refresh
+// regardless of the current token's remaining lifetime.
+export const refreshAccessToken = async (): Promise<boolean> => {
+  try {
+    await keycloak.updateToken(-1);
+    return !!keycloak.token;
+  } catch {
+    return false;
+  }
+};

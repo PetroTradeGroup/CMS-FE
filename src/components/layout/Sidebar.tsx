@@ -1,10 +1,11 @@
 import React from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Banknote, Settings, LogOut, Database, ChevronLeft, ChevronRight, Sparkles, Package, Building2, ClipboardCheck, ClipboardList, Receipt, ShoppingCart } from 'lucide-react';
+import { NavLink } from 'react-router-dom';
+import { LayoutDashboard, Banknote, Settings, LogOut, Database, ChevronLeft, ChevronRight, Sparkles, Package, Building2, ClipboardCheck, ClipboardList, Receipt, ShoppingCart, UserPlus, MapPin, ScrollText } from 'lucide-react';
 import logo from '../../assets/logo.jpg';
-import { logout } from '../../services/auth';
+import { logout, hasRole } from '../../services/auth';
 
-const NAV_ITEMS = [
+// `roles` (when present) gates the item — it only renders if the token carries one of them.
+const NAV_ITEMS: { to: string; label: string; icon: typeof LayoutDashboard; roles?: string[] }[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/coupons', label: 'Coupons', icon: Banknote },
   { to: '/batches', label: 'Batches', icon: Package },
@@ -12,7 +13,10 @@ const NAV_ITEMS = [
   { to: '/redemptions', label: 'Redemptions', icon: Receipt },
   { to: '/approvals', label: 'Approvals', icon: ClipboardCheck },
   { to: '/erp-sales', label: 'ERP Sales', icon: ShoppingCart },
+  { to: '/audit', label: 'Audit Log', icon: ScrollText, roles: ['ADMIN', 'AUDITOR'] },
   { to: '/departments', label: 'Departments', icon: Building2 },
+  { to: '/locations', label: 'Locations', icon: MapPin },
+  { to: '/attendants/register', label: 'Register Attendant', icon: UserPlus, roles: ['TEAM_LEADER', 'ADMIN'] },
   { to: '/fuel-types', label: 'Fuel Types', icon: Database },
   { to: '/ai', label: 'Report', icon: Sparkles },
   { to: '/settings', label: 'Settings', icon: Settings },
@@ -24,11 +28,9 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => {
-  const navigate = useNavigate();
-
   const handleLogout = () => {
+    // Keycloak performs a full-page redirect to end the SSO session and return to '/'.
     logout();
-    navigate('/');
   };
 
   return (
@@ -93,7 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
       </div>
       
       <nav style={{ padding: '1.5rem 0.75rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto' }}>
-        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+        {NAV_ITEMS.filter(({ roles }) => !roles || hasRole(...roles)).map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}

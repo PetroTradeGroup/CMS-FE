@@ -3,9 +3,9 @@ import { Banknote, Search, Filter, ArrowRightLeft, X, AlertCircle, CheckCircle2 
 import { Link } from 'react-router-dom';
 import {
   getCoupons, transitionCoupons, getCouponHistory, COUPON_STATUSES, ALLOWED_TRANSITIONS,
-  getStatusBadgeClass, formatDenomination
+  getStatusBadgeClass, formatDenomination, getOriginBadgeClass, formatOrigin
 } from '../services/coupons';
-import type { Coupon, CouponStatus, CouponMovement, TransitionResult } from '../services/coupons';
+import type { Coupon, CouponStatus, CouponOrigin, CouponMovement, TransitionResult } from '../services/coupons';
 import { getFuelTypes } from '../services/fuelTypes';
 import type { FuelType } from '../services/fuelTypes';
 import { getLocations } from '../services/locations';
@@ -32,6 +32,7 @@ export const Coupons: React.FC = () => {
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [originFilter, setOriginFilter] = useState<CouponOrigin | ''>('');
   const [fuelTypeFilter, setFuelTypeFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -43,6 +44,13 @@ export const Coupons: React.FC = () => {
     const t = setTimeout(() => setBatchNumberFilter(batchNumberInput.trim()), 500);
     return () => clearTimeout(t);
   }, [batchNumberInput]);
+
+  // Coupon number search is a server-side filter (partial, case-insensitive) — debounce the typing
+  const [couponNumberFilter, setCouponNumberFilter] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setCouponNumberFilter(searchTerm.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
   // Bulk transition
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -87,7 +95,7 @@ export const Coupons: React.FC = () => {
   // Reset page to 0 when filters or page size change
   useEffect(() => {
     setPage(0);
-  }, [statusFilter, fuelTypeFilter, dateFrom, dateTo, pageSize, batchNumberFilter]);
+  }, [statusFilter, originFilter, fuelTypeFilter, dateFrom, dateTo, pageSize, batchNumberFilter, couponNumberFilter]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -100,9 +108,11 @@ export const Coupons: React.FC = () => {
       try {
         const filters = {
           status: statusFilter || undefined,
+          origin: originFilter || undefined,
           fuelTypeId: fuelTypeFilter || undefined,
           dateFrom: dateFrom || undefined,
           dateTo: dateTo || undefined,
+          couponNumber: couponNumberFilter || undefined,
           batchNumber: batchNumberFilter || undefined
         };
 
@@ -145,7 +155,7 @@ export const Coupons: React.FC = () => {
     };
 
     fetchData();
-  }, [page, statusFilter, fuelTypeFilter, dateFrom, dateTo, pageSize, refreshKey, batchNumberFilter]);
+  }, [page, statusFilter, originFilter, fuelTypeFilter, dateFrom, dateTo, pageSize, refreshKey, batchNumberFilter, couponNumberFilter]);
 
   const handleExport = async () => {
     setExporting(true);
@@ -157,9 +167,11 @@ export const Coupons: React.FC = () => {
         // Fetch all pages for export
         const filters = {
           status: statusFilter || undefined,
+          origin: originFilter || undefined,
           fuelTypeId: fuelTypeFilter || undefined,
           dateFrom: dateFrom || undefined,
           dateTo: dateTo || undefined,
+          couponNumber: couponNumberFilter || undefined,
           batchNumber: batchNumberFilter || undefined
         };
 
@@ -184,7 +196,9 @@ export const Coupons: React.FC = () => {
         'Fuel Type': c.fuelType.name,
         'Denomination (L)': c.denomination > 0 ? c.denomination : 'N/A',
         'Status': c.status,
+        'Origin': formatOrigin(c.origin),
         'Batch': c.batchNumber || '',
+        'Batch Number (seq)': c.batchSequenceNumber ?? '',
         'Batch Sequence': c.batchSequence ?? '',
         'Book Number': c.bookNumber ?? '',
         'Created At': new Date(c.createdAt).toLocaleString()
@@ -200,10 +214,8 @@ export const Coupons: React.FC = () => {
     }
   };
 
-  // Local filter for search term only, since others are handled by backend
-  const filteredCoupons = coupons.filter(c => {
-    return c.couponNumber.toLowerCase().includes(searchTerm.toLowerCase());
-  });
+  // Every filter, including the coupon-number search, is applied server-side — render what came back.
+  const filteredCoupons = coupons;
 
   const toggleSelect = (couponNumber: string) => {
     setSelected(prev => {
@@ -351,7 +363,20 @@ export const Coupons: React.FC = () => {
                 ))}
               </select>
             </div>
-            
+
+            <div className="input-group" style={{ width: '160px', marginBottom: 0 }}>
+              <label style={{ fontSize: '0.8rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Origin</label>
+              <select
+                className="input-field"
+                value={originFilter}
+                onChange={(e) => setOriginFilter(e.target.value as CouponOrigin | '')}
+              >
+                <option value="">All Origins</option>
+                <option value="GENERATED">Generated</option>
+                <option value="LEGACY_IMPORT">Legacy Import</option>
+              </select>
+            </div>
+
             <div className="input-group" style={{ width: '180px', marginBottom: 0 }}>
               <label style={{ fontSize: '0.8rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Fuel Type</label>
               <select 
@@ -375,7 +400,7 @@ export const Coupons: React.FC = () => {
                 <input
                   type="text"
                   className="input-field"
-                  placeholder="Local search..."
+                  placeholder="Coupon number (partial)"
                   style={{ paddingLeft: '2.5rem' }}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
@@ -443,6 +468,7 @@ export const Coupons: React.FC = () => {
                   <th>Fuel Type</th>
                   <th>Denomination</th>
                   <th>Status</th>
+                  <th>Origin</th>
                   <th>Batch</th>
                   <th>Book</th>
                   <th>Created At</th>
@@ -475,8 +501,22 @@ export const Coupons: React.FC = () => {
                         {coupon.status.replace('_', ' ')}
                       </span>
                     </td>
+                    <td>
+                      <span className={`badge ${getOriginBadgeClass(coupon.origin)}`}>
+                        {formatOrigin(coupon.origin)}
+                      </span>
+                    </td>
                     <td style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-                      {coupon.batchNumber ? `${coupon.batchNumber} #${coupon.batchSequence ?? '—'}` : '—'}
+                      {coupon.batchNumber ? (
+                        <>
+                          {coupon.batchNumber}
+                          <div style={{ fontSize: '0.75rem' }}>
+                            {coupon.batchSequenceNumber != null && `Batch ${coupon.batchSequenceNumber}`}
+                            {coupon.batchSequenceNumber != null && coupon.batchSequence != null && ' · '}
+                            {coupon.batchSequence != null && `#${coupon.batchSequence} in batch`}
+                          </div>
+                        </>
+                      ) : '—'}
                     </td>
                     <td style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
                       {coupon.bookNumber ?? '—'}
@@ -638,7 +678,7 @@ export const Coupons: React.FC = () => {
               <div>
                 <h3 style={{ margin: 0, color: 'var(--color-accent-gold)', letterSpacing: '0.05em' }}>{historyCoupon.couponNumber}</h3>
                 <p style={{ margin: '0.3rem 0 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-                  {historyCoupon.fuelType.name} · {formatDenomination(historyCoupon.denomination)} · <span className={`badge ${getStatusBadgeClass(historyCoupon.status)}`}>{historyCoupon.status.replace('_', ' ')}</span>
+                  {historyCoupon.fuelType.name} · {formatDenomination(historyCoupon.denomination)} · <span className={`badge ${getStatusBadgeClass(historyCoupon.status)}`}>{historyCoupon.status.replace('_', ' ')}</span> · <span className={`badge ${getOriginBadgeClass(historyCoupon.origin)}`}>{formatOrigin(historyCoupon.origin)}</span>
                 </p>
               </div>
               <button className="btn btn-secondary" style={{ padding: '0.3rem 0.5rem' }} onClick={() => setHistoryCoupon(null)}>

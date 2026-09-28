@@ -1,6 +1,9 @@
 import { getAccessToken, refreshAccessToken, logout } from './auth';
 
-export const API_BASE_URL = '/api/v1';
+// Relative by default so the Vite dev server's proxy (vite.config.ts) handles it locally; in a
+// built image there's no dev server, so this must be baked in at build time as an absolute URL
+// pointing at the backend (see Dockerfile) — Vite only inlines VITE_* vars present at build time.
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -63,8 +66,8 @@ export const fetchApi = async <T>(endpoint: string, options: RequestInit = {}): 
   // endpoint). Only a failed refresh (no valid refresh token left) means the session is actually
   // dead and worth forcing back to login.
   if (response.status === 401 && !refreshed) {
+    // Redirects the browser to Keycloak to re-establish a session.
     logout();
-    window.location.href = '/';
     throw new ApiError('Session expired, please sign in again', 401);
   }
 

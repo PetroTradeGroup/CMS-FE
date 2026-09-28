@@ -1,7 +1,8 @@
-import { fetchApi } from './api';
-import type { PagedResponse } from './api';
+import { fetchApi, API_BASE_URL, ApiError } from './api';
+import type { PagedResponse, ApiResult } from './api';
 import type { Department } from './departments';
 import type { ApprovalRequest } from './approvals';
+import { getAccessToken, refreshAccessToken } from './auth';
 
 export interface FuelType {
   id: number;
@@ -33,18 +34,26 @@ export const COUPON_STATUSES: CouponStatus[] = [
 
 export type CouponType = 'PHYSICAL' | 'DIGITAL';
 
+// GENERATED = created by the system's own generation flow; LEGACY_IMPORT = registered via
+// /coupons/legacy-import for a pre-existing barcode. The coupon number itself gives no clue —
+// this is the only way to tell the two apart.
+export type CouponOrigin = 'GENERATED' | 'LEGACY_IMPORT';
+
 export interface Coupon {
   id: number;
   couponNumber: string;
   fuelType: FuelType;
   status: CouponStatus;
+  origin: CouponOrigin;
   denomination: number; // litres; 0 = legacy coupon with unknown denomination
   couponType: CouponType;
   expiryDate: string | null;
   location: Location | null;
   department: Department | null;
   batchNumber: string | null;
-  batchSequence: number | null;
+  batchSequenceNumber: number | null; // which batch — the batch's own running number per fuel type
+  // ("Batch 47"); null only for legacy coupons with no batch. Not the same as batchSequence below.
+  batchSequence: number | null; // the coupon's position within its batch
   bookNumber: number | null;
   createdAt: string;
 }
@@ -63,6 +72,12 @@ export const getStatusBadgeClass = (status: string) => {
   }
 };
 
+export const getOriginBadgeClass = (origin: CouponOrigin) =>
+  origin === 'LEGACY_IMPORT' ? 'badge-warning' : 'badge-success';
+
+export const formatOrigin = (origin: CouponOrigin) =>
+  origin === 'LEGACY_IMPORT' ? 'Legacy Import' : 'Generated';
+
 // Coupons generated before the denomination release carry denomination 0 ("unknown")
 export const formatDenomination = (denomination: number | null | undefined) =>
   denomination && denomination > 0 ? `${denomination} L` : '—';
@@ -72,6 +87,8 @@ export interface CouponFilters {
   dateTo?: string;
   fuelTypeId?: string | number;
   status?: string;
+  origin?: CouponOrigin;
+  couponNumber?: string; // partial, case-insensitive; matches anywhere in the number. Server-side.
   batchNumber?: string; // exact match, case-insensitive, whitespace-trimmed server-side
   batchId?: number; // for screens that already hold the internal ID (batch detail)
 }
@@ -149,6 +166,59 @@ export const importLegacyCoupon = (request: LegacyImportRequest) => {
   });
 };
 
+// One row's outcome from a bulk legacy import. `row` is 1-indexed matching Excel (row 1 = header).
+export interface LegacyBulkImportRow {
+  row: number;
+  couponNumber: string;
+  success: boolean;
+  reason: string | null;
+}
+
+export interface LegacyBulkImportResult {
+  totalRows: number;
+  succeeded: number;
+  failed: number;
+  dryRun: boolean;
+  results: LegacyBulkImportRow[];
+}
+
+// Bulk version of importLegacyCoupon — one .xlsx with a header row, columns in order:
+// couponNumber, fuelTypeCode, denomination, locationCode (optional), departmentCode (optional),
+// expiryDate (optional, yyyy-MM-dd). Failures never block the rest of the file — check
+// `results` for per-row outcomes. Multipart body, so this bypasses fetchApi (which always
+// forces a JSON Content-Type) and repeats its token-refresh-and-retry handling directly.
+export const importLegacyCouponsBulk = async (
+  file: File,
+  options?: { dryRun?: boolean; performedBy?: string }
+): Promise<ApiResult<LegacyBulkImportResult>> => {
+  const form = new FormData();
+  form.append('file', file);
+  if (options?.dryRun) form.append('dryRun', 'true');
+  if (options?.performedBy?.trim()) form.append('performedBy', options.performedBy.trim());
+
+  const url = `${API_BASE_URL}/coupons/legacy-import/bulk`;
+  const doRequest = () => {
+    const token = getAccessToken();
+    return fetch(url, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+  };
+
+  let response = await doRequest();
+  if (response.status === 401) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) response = await doRequest();
+  }
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new ApiError(data.message || 'Failed to import the spreadsheet.', response.status);
+  }
+  return { ...data, status: response.status };
+};
+
 // Legal targets per the backend state machine — used to narrow the transition dropdown
 // when every selected coupon shares the same status. REDEEMED/EXPIRED/CANCELLED are terminal.
 export const ALLOWED_TRANSITIONS: Record<CouponStatus, CouponStatus[]> = {
@@ -191,6 +261,8 @@ export const getCoupons = (page = 0, size = 20, filters?: CouponFilters, sort?: 
     if (filters.dateTo) url += `&dateTo=${filters.dateTo}`;
     if (filters.fuelTypeId) url += `&fuelTypeId=${filters.fuelTypeId}`;
     if (filters.status) url += `&status=${filters.status}`;
+    if (filters.origin) url += `&origin=${filters.origin}`;
+    if (filters.couponNumber) url += `&couponNumber=${encodeURIComponent(filters.couponNumber.trim())}`;
     if (filters.batchNumber) url += `&batchNumber=${encodeURIComponent(filters.batchNumber.trim())}`;
     if (filters.batchId) url += `&batchId=${filters.batchId}`;
   }
