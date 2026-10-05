@@ -35,10 +35,10 @@ const openCalendar = (e: React.MouseEvent<HTMLInputElement>) => {
 
 export const RedemptionSummary: React.FC = () => {
   // A retail caller (Attendant/Team Leader) carries a locationCode claim and is locked to that
-  // station server-side. Only an Admin (no claim) may look across sites. The by-attendant
+  // station server-side. Only Admin/Stocks (no claim) may look across sites. The by-attendant
   // breakdown is Team-Leader-only on the backend (Admin gets 403 there).
   const stationCode = getLocationCode();
-  const isAdmin = hasRole('ADMIN');
+  const isAdmin = hasRole('ADMIN', 'STOCKS_CONTROLLER', 'STOCKS_CLERK', 'REGIONAL_REP'); // back office — may pick any site
   const isTeamLeader = hasRole('TEAM_LEADER');
   const canPickSite = isAdmin && !stationCode;
 

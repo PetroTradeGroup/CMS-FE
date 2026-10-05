@@ -2,9 +2,10 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, Banknote, Settings, LogOut, Database, ChevronLeft, ChevronRight, Sparkles, Package, Building2, ClipboardCheck, ClipboardList, Receipt, ShoppingCart, UserPlus, MapPin, ScrollText } from 'lucide-react';
 import logo from '../../assets/logo.jpg';
-import { logout, hasRole } from '../../services/auth';
+import { logout, hasRole, canSee } from '../../services/auth';
 
 // `roles` (when present) gates the item — it only renders if the token carries one of them.
+// On top of that, items for pages the user's role can't open (canSee) are hidden.
 const NAV_ITEMS: { to: string; label: string; icon: typeof LayoutDashboard; roles?: string[] }[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/coupons', label: 'Coupons', icon: Banknote },
@@ -95,7 +96,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
       </div>
       
       <nav style={{ padding: '1.5rem 0.75rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto' }}>
-        {NAV_ITEMS.filter(({ roles }) => !roles || hasRole(...roles)).map(({ to, label, icon: Icon }) => (
+        {NAV_ITEMS.filter(({ to, roles }) => (!roles || hasRole(...roles)) && canSee(to)).map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}

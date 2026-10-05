@@ -1,8 +1,8 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Layout } from './components/layout/Layout';
 import { Login } from './pages/Login';
-import { isAuthenticated } from './services/auth';
+import { isAuthenticated, canSee, homePath } from './services/auth';
 import { Dashboard } from './pages/Dashboard';
 import { Coupons } from './pages/Coupons';
 import { GenerateCoupons } from './pages/GenerateCoupons';
@@ -25,8 +25,12 @@ import { AiAssistant } from './pages/AiAssistant';
 
 // Guards the authenticated area. With the session already resolved in main.tsx, an unauthenticated
 // visitor is sent back to the landing page, which offers the Keycloak sign-in redirect.
+// A signed-in user on a page their role can't open is bounced to their home page — this also
+// catches the post-login /dashboard redirect and the catch-all below.
 const RequireAuth: React.FC = () => {
-  return isAuthenticated() ? <Layout /> : <Navigate to="/" replace />;
+  const { pathname } = useLocation();
+  if (!isAuthenticated()) return <Navigate to="/" replace />;
+  return canSee(pathname) ? <Layout /> : <Navigate to={homePath()} replace />;
 };
 
 const App: React.FC = () => {

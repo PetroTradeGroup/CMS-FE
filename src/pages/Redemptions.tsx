@@ -28,11 +28,15 @@ export const Redemptions: React.FC = () => {
   // The backend scopes this list by the caller's token: an Attendant sees only redemptions they
   // submitted at their station; a Team Leader sees every redemption at their station; Admin/Stocks
   // see all sites. This banner just makes that scope visible — it isn't what enforces it.
-  // An Admin isn't bound to a station (no locationCode claim), so they may narrow the list to one
+  // Admin/Stocks aren't bound to a station (no locationCode claim), so they may narrow the list to one
   // site via the picker below; everyone else is locked to their own station server-side.
   const stationCode = getLocationCode();
   const isTeamLeader = hasRole('TEAM_LEADER');
-  const canPickSite = hasRole('ADMIN') && !stationCode;
+  const canPickSite = hasRole('ADMIN', 'STOCKS_CONTROLLER', 'STOCKS_CLERK', 'REGIONAL_REP') && !stationCode;
+  // Station staff don't need the Status / Actions columns on the Posted and All tabs.
+  const isStationStaff = hasRole('ATTENDANT', 'TEAM_LEADER');
+  // Regional Rep is view-only — no Post.
+  const canPost = !hasRole('REGIONAL_REP') || hasRole('ADMIN');
 
   const [requests, setRequests] = useState<RedemptionRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,6 +44,7 @@ export const Redemptions: React.FC = () => {
   const [success, setSuccess] = useState<string | null>(null);
 
   const [statusTab, setStatusTab] = useState<RedemptionStatus | ''>('PENDING');
+  const hideStatusActions = isStationStaff && statusTab !== 'PENDING';
   const [locationId, setLocationId] = useState<number | ''>('');
   const [sites, setSites] = useState<LocationDetail[]>([]);
   const [page, setPage] = useState(0);
@@ -54,7 +59,7 @@ export const Redemptions: React.FC = () => {
       ? sites.find((s) => s.id === Number(locationId))?.name ?? 'Selected site'
       : 'All sites';
 
-  // Only Admin gets the picker — pull the active sites once for it.
+  // Only Admin/Stocks get the picker — pull the active sites once for it.
   useEffect(() => {
     if (!canPickSite) return;
     getLocations(true).then((res) => setSites(res.data || [])).catch(() => setSites([]));
@@ -252,8 +257,8 @@ export const Redemptions: React.FC = () => {
                   <th>Site</th>
                   <th>Requested By</th>
                   <th>Requested At</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
+                  {!hideStatusActions && <th>Status</th>}
+                  {!hideStatusActions && <th style={{ textAlign: 'right' }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -268,16 +273,16 @@ export const Redemptions: React.FC = () => {
                     <td style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
                       {new Date(req.requestedAt).toLocaleString()}
                     </td>
-                    <td>
+                    {!hideStatusActions && <td>
                       <span className={`badge ${redemptionBadge(req.status)}`}>{req.status}</span>
                       {req.status === 'POSTED' && req.documentNumber && (
                         <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.2rem' }}>
                           {req.documentNumber}
                         </div>
                       )}
-                    </td>
-                    <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
-                      {req.status === 'PENDING' ? (
+                    </td>}
+                    {!hideStatusActions && <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                      {req.status === 'PENDING' ? (canPost &&
                         <button className="btn btn-primary" style={{ padding: '0.35rem 0.8rem', fontSize: '0.8rem' }} onClick={() => openPost(req)}>
                           Post
                         </button>
@@ -286,7 +291,7 @@ export const Redemptions: React.FC = () => {
                           by {req.decidedBy || '—'}
                         </span>
                       )}
-                    </td>
+                    </td>}
                   </tr>
                 ))}
               </tbody>
@@ -359,7 +364,7 @@ export const Redemptions: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', gap: '1rem' }}>
-            {detailRequest.status === 'PENDING' ? (
+            {detailRequest.status === 'PENDING' && canPost ? (
               <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => openPost(detailRequest)}>
                 Post
               </button>

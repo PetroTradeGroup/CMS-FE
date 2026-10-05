@@ -6,6 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { getBulkLimit } from '../services/config';
+import { canSee, hasRole } from '../services/auth';
 import type { BulkLimit } from '../services/config';
 
 import { getCoupons, getCouponsByFuelType, getStatusBadgeClass } from '../services/coupons';
@@ -66,6 +67,8 @@ const renderPieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }:
 
 // ─── Component ───────────────────────────────────────────────────────────────
 export const Dashboard: React.FC = () => {
+  // Regional Rep gets In Stock / Redeemed / Fuel Types cards plus the two charts only.
+  const isRegionalRep = hasRole('REGIONAL_REP') && !hasRole('ADMIN');
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     totalCoupons: 0,
@@ -161,20 +164,22 @@ export const Dashboard: React.FC = () => {
           <h1>Dashboard Overview</h1>
           <p style={{ margin: 0 }}>Welcome back to the Petrotrade Coupon Portal</p>
         </div>
-        <Link to="/coupons/generate" className="btn btn-primary" style={{ boxShadow: '0 10px 20px rgba(206, 166, 32, 0.2)' }}>
-          <Banknote size={18} />
-          Generate Coupons
-        </Link>
+        {canSee('/coupons/generate') && (
+          <Link to="/coupons/generate" className="btn btn-primary" style={{ boxShadow: '0 10px 20px rgba(206, 166, 32, 0.2)' }}>
+            <Banknote size={18} />
+            Generate Coupons
+          </Link>
+        )}
       </div>
 
       {/* Stats Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem' }}>
-        <StatCard label="Total Generated" value={stats.totalCoupons.toLocaleString()} icon={<Ticket size={20} />} color={GOLD} />
+        {!isRegionalRep && <StatCard label="Total Generated" value={stats.totalCoupons.toLocaleString()} icon={<Ticket size={20} />} color={GOLD} />}
         <StatCard label="In Stock"        value={stats.inStockCoupons.toLocaleString()}  icon={<Ticket size={20} />} color={GREEN} delay="delay-100" />
         <StatCard label="Redeemed"        value={stats.redeemedCoupons.toLocaleString()} icon={<TrendingUp size={20} />} color={GOLD} delay="delay-200" />
-        <StatCard label="Expired Coupons" value={stats.expiredCoupons.toLocaleString()} icon={<Ticket size={20} />} color={RED} delay="delay-200" />
+        {!isRegionalRep && <StatCard label="Expired Coupons" value={stats.expiredCoupons.toLocaleString()} icon={<Ticket size={20} />} color={RED} delay="delay-200" />}
         <StatCard label="Fuel Types"      value={stats.totalFuelTypes.toString()}       icon={<Database size={20} />} color="#fff" delay="delay-300" />
-        <StatCard label="Bulk Gen. Limit" value={stats.bulkLimit.toLocaleString()}      icon={<Banknote size={20} />} color={GREEN} delay="delay-300" />
+        {!isRegionalRep && <StatCard label="Bulk Gen. Limit" value={stats.bulkLimit.toLocaleString()}      icon={<Banknote size={20} />} color={GREEN} delay="delay-300" />}
       </div>
 
       {/* Charts Row */}
@@ -251,8 +256,8 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Recent Coupons Table */}
-      <div className="glass-panel delay-300" style={{ padding: '1.5rem' }}>
+      {/* Recent Coupons Table — only for users who can open the Coupons page (not Finance) */}
+      {canSee('/coupons') && <div className="glass-panel delay-300" style={{ padding: '1.5rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
           <h2 style={{ fontSize: '1.25rem', margin: 0 }}>Recent Coupons</h2>
           <Link to="/coupons" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.9rem' }}>
@@ -296,7 +301,7 @@ export const Dashboard: React.FC = () => {
             No coupons generated yet.
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 };
