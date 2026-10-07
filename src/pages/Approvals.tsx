@@ -5,6 +5,7 @@ import type { ApprovalRequest, ApprovalStatus } from '../services/approvals';
 import { ApiError, getErrorMessage } from '../services/api';
 import { Modal } from '../components/Modal';
 import { generateGrvPdf } from '../utils/grvPdf';
+import { hasRole, isCommercialManager } from '../services/auth';
 
 const STATUS_TABS: { label: string; value: ApprovalStatus | '' }[] = [
   { label: 'Pending', value: 'PENDING' },
@@ -47,13 +48,21 @@ const describeSubject = (req: ApprovalRequest) => {
   return `${req.batchNumber || '—'}${range}`;
 };
 
+// A requisition's transfer is requested by whoever raised the requisition, not the Stocks fulfiller.
+const requesterOf = (req: ApprovalRequest) => req.requisitionRequestedBy ?? req.requestedBy;
+
+// A requisition's receipt is confirmed by the Commercial Manager only; other transfers keep the old rules.
+const canConfirm = (req: ApprovalRequest) => req.requisitionId == null || isCommercialManager();
+
 export const Approvals: React.FC = () => {
+  // A Commercial Manager only receives — no approve/reject — and lands on what's In Transit.
+  const canDecide = !isCommercialManager() || hasRole('ADMIN', 'STOCKS_CONTROLLER');
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const [statusTab, setStatusTab] = useState<ApprovalStatus | ''>('PENDING');
+  const [statusTab, setStatusTab] = useState<ApprovalStatus | ''>(canDecide ? 'PENDING' : 'TRANSFERSHIPMENT');
   const [page, setPage] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
@@ -250,7 +259,7 @@ export const Approvals: React.FC = () => {
                         req.toDepartment ? `Dept: ${req.toDepartment.name}` : null,
                       ].filter(Boolean).join(' · ') || '—'}
                     </td>
-                    <td>{req.requestedBy}</td>
+                    <td>{requesterOf(req)}</td>
                     <td style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
                       {new Date(req.requestedAt).toLocaleString()}
                     </td>
@@ -265,7 +274,7 @@ export const Approvals: React.FC = () => {
                       )}
                     </td>
                     <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
-                      {req.status === 'PENDING' ? (
+                      {req.status === 'PENDING' && canDecide ? (
                         <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
                           <button className="btn btn-primary" style={{ padding: '0.35rem 0.8rem', fontSize: '0.8rem' }} onClick={() => openDecision(req, 'approve')}>
                             Approve
@@ -274,7 +283,7 @@ export const Approvals: React.FC = () => {
                             Reject
                           </button>
                         </div>
-                      ) : req.status === 'TRANSFERSHIPMENT' ? (
+                      ) : req.status === 'TRANSFERSHIPMENT' && canConfirm(req) ? (
                         <button className="btn btn-primary" style={{ padding: '0.35rem 0.8rem', fontSize: '0.8rem' }} onClick={() => openDecision(req, 'confirm-receipt')}>
                           Confirm Receipt
                         </button>
@@ -370,7 +379,8 @@ export const Approvals: React.FC = () => {
               {detailRequest.toDepartment && <div><strong>To department:</strong> {detailRequest.toDepartment.name} ({detailRequest.toDepartment.code})</div>}
               {detailRequest.reason && <div><strong>Reason:</strong> {detailRequest.reason}</div>}
               {detailRequest.requisitionId != null && <div><strong>Raised from:</strong> Requisition #{detailRequest.requisitionId}</div>}
-              <div><strong>Requested by:</strong> {detailRequest.requestedBy} on {new Date(detailRequest.requestedAt).toLocaleString()}</div>
+              <div><strong>Requested by:</strong> {requesterOf(detailRequest)} on {new Date(detailRequest.requestedAt).toLocaleString()}</div>
+              {detailRequest.requisitionRequestedBy && <div><strong>Fulfilled by:</strong> {detailRequest.requestedBy}</div>}
               {detailRequest.status !== 'PENDING' && (
                 <>
                   <div><strong>Decided by:</strong> {detailRequest.decidedBy || '—'}{detailRequest.decidedAt ? ` on ${new Date(detailRequest.decidedAt).toLocaleString()}` : ''}</div>
@@ -397,7 +407,7 @@ export const Approvals: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', gap: '1rem' }}>
-              {detailRequest.status === 'PENDING' ? (
+              {detailRequest.status === 'PENDING' && canDecide ? (
                 <>
                   <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => openDecision(detailRequest, 'approve')}>
                     Approve
@@ -410,7 +420,7 @@ export const Approvals: React.FC = () => {
                     Reject
                   </button>
                 </>
-              ) : detailRequest.status === 'TRANSFERSHIPMENT' ? (
+              ) : detailRequest.status === 'TRANSFERSHIPMENT' && canConfirm(detailRequest) ? (
                 <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => openDecision(detailRequest, 'confirm-receipt')}>
                   Confirm Receipt
                 </button>
@@ -455,7 +465,7 @@ export const Approvals: React.FC = () => {
               {selected.targetStatus && <div><strong>Target status:</strong> {selected.targetStatus.replace('_', ' ')}</div>}
               {selected.toLocation && <div><strong>To location:</strong> {selected.toLocation.name}</div>}
               {selected.toDepartment && <div><strong>To department:</strong> {selected.toDepartment.name}</div>}
-              <div><strong>Requested by:</strong> {selected.requestedBy} on {new Date(selected.requestedAt).toLocaleString()}</div>
+              <div><strong>Requested by:</strong> {requesterOf(selected)} on {new Date(selected.requestedAt).toLocaleString()}</div>
             </div>
 
             {modalError && (

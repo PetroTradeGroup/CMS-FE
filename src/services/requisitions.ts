@@ -42,7 +42,7 @@ export interface RequisitionLineRequest {
 }
 
 export interface CreateRequisitionRequest {
-  departmentId: number;
+  departmentId?: number; // only read when the caller's token has no department (e.g. Admin)
   locationId: number;
   requestedBy: string;
   lines: RequisitionLineRequest[]; // books (preferred) or litres per (fuel type, denomination) — no two lines may repeat the same pair

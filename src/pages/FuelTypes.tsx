@@ -10,8 +10,10 @@ import {
 import type { FuelType, FuelTypePayload } from '../services/fuelTypes';
 import { Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { isSalesClerk } from '../services/auth';
 
 export const FuelTypesManager: React.FC = () => {
+  const readOnly = isSalesClerk();
   const [fuelTypes, setFuelTypes] = useState<FuelType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -116,9 +118,11 @@ export const FuelTypesManager: React.FC = () => {
           <button className="btn btn-secondary" onClick={handleExport} disabled={fuelTypes.length === 0}>
             <Download size={18} /> Export
           </button>
-          <button className="btn btn-primary" onClick={() => handleOpenModal()}>
-            <Plus size={18} /> Add Fuel Type
-          </button>
+          {!readOnly && (
+            <button className="btn btn-primary" onClick={() => handleOpenModal()}>
+              <Plus size={18} /> Add Fuel Type
+            </button>
+          )}
         </div>
       </div>
 
@@ -137,7 +141,7 @@ export const FuelTypesManager: React.FC = () => {
                 <th>Name</th>
                 <th>Description</th>
                 <th>Status</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
+                {!readOnly && <th style={{ textAlign: 'right' }}>Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -153,7 +157,7 @@ export const FuelTypesManager: React.FC = () => {
                       {ft.active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
-                  <td style={{ textAlign: 'right' }}>
+                  {!readOnly && <td style={{ textAlign: 'right' }}>
                     <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                       <button 
                         className="btn btn-secondary" 
@@ -172,7 +176,7 @@ export const FuelTypesManager: React.FC = () => {
                         <Edit2 size={16} />
                       </button>
                     </div>
-                  </td>
+                  </td>}
                 </tr>
               ))}
               {fuelTypes.length === 0 && (

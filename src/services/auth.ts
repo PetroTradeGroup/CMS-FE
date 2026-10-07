@@ -22,8 +22,12 @@ export const isAuthenticated = (): boolean => !!keycloak.authenticated;
 // True when the current token carries any of the given roles, as either a realm role or a
 // client role on the coupon-backend client. Server-side checks are still authoritative — this
 // only drives what the UI bothers to show.
-export const hasRole = (...roles: string[]): boolean =>
-  roles.some((role) => keycloak.hasRealmRole(role) || keycloak.hasResourceRole(role));
+// Client roles are read from every client on the token, not just VITE_KEYCLOAK_CLIENT_ID — a
+// build with a different client id would otherwise miss roles assigned on coupon-backend.
+export const hasRole = (...roles: string[]): boolean => {
+  const clientRoles = Object.values(keycloak.tokenParsed?.resource_access ?? {}).flatMap((c) => c.roles ?? []);
+  return roles.some((role) => keycloak.hasRealmRole(role) || clientRoles.includes(role));
+};
 
 // Stocks sees redemptions across sites but doesn't redeem, so no /redemptions/scan.
 const STOCKS_PAGES = ['/dashboard', '/coupons/*', '/batches/*', '/requisitions/*', '/redemptions', '/redemptions/summary'];
@@ -39,7 +43,17 @@ const ROLE_PAGES: Record<string, string[]> = {
   FINANCE: ['/dashboard', '/erp-sales'], // Dashboard without Recent Coupons (see Dashboard.tsx)
   // Cut-down Dashboard (see Dashboard.tsx), redemptions across all sites, and the Report page.
   REGIONAL_REP: ['/dashboard', '/redemptions', '/redemptions/summary', '/ai'],
+  // Raises requisitions and tracks them on SalesDashboard.tsx; Fuel Types is view-only for them.
+  SALES_CLERK: ['/dashboard', '/requisitions/*', '/fuel-types'],
+  // Receiving side of a requisition: confirms receipt of In Transit coupons on Approvals.
+  COMMERCIAL_MANAGER: ['/approvals'],
 };
+
+// Only a Commercial Manager may confirm receipt on a requisition's transfer (backend: 403 otherwise).
+export const isCommercialManager = (): boolean => hasRole('COMMERCIAL_MANAGER');
+
+// Sales Clerk only raises requisitions — no fulfil/reject, no fuel type edits.
+export const isSalesClerk = (): boolean => hasRole('SALES_CLERK') && !hasRole('ADMIN');
 
 export const canSee = (path: string): boolean => {
   if (hasRole('ADMIN')) return true;
@@ -48,12 +62,17 @@ export const canSee = (path: string): boolean => {
 };
 
 // Where to land after login or after being bounced from a page the user can't open.
-export const homePath = (): string => (canSee('/dashboard') ? '/dashboard' : '/redemptions');
+export const homePath = (): string => ['/dashboard', '/approvals'].find(canSee) ?? '/redemptions';
 
 // The Keycloak username (preferred_username claim) — the value the backend records as
 // requestedBy / performedBy and scopes an Attendant's own view by.
 export const getUsername = (): string | null =>
   (keycloak.tokenParsed?.preferred_username as string | undefined) ?? null;
+
+// The caller's department code (the `department` claim). The backend raises a requisition for
+// this department, so the form only asks for one when it's missing (e.g. an Admin).
+export const getDepartmentCode = (): string | null =>
+  (keycloak.tokenParsed?.department as string | undefined) ?? null;
 
 // The station a retail caller (Attendant/Team Leader) is tied to, stamped on the token as the
 // `locationCode` claim. Null for non-retail callers (Admin/Stocks), who aren't bound to one

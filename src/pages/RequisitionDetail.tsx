@@ -10,6 +10,7 @@ import type { CouponStatus } from '../services/coupons';
 import type { ApprovalRequest } from '../services/approvals';
 import { getErrorMessage } from '../services/api';
 import { Modal } from '../components/Modal';
+import { isSalesClerk } from '../services/auth';
 
 const requisitionBadge = (status: Requisition['status']) => {
   switch (status) {
@@ -295,7 +296,7 @@ export const RequisitionDetail: React.FC = () => {
             {requisition.department?.name ?? '—'} → {requisition.location?.name ?? '—'} · <span className={`badge ${requisitionBadge(requisition.status)}`}>{requisition.status.replace('_', ' ')}</span>
           </p>
         </div>
-        {isOpenForAction(requisition.status) && (
+        {isOpenForAction(requisition.status) && !isSalesClerk() && (
           <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
             <button className="btn btn-primary" onClick={openAutoFulfill}>
               <Zap size={18} /> Auto Fulfill

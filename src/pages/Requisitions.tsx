@@ -11,6 +11,7 @@ import { getActiveFuelTypes } from '../services/fuelTypes';
 import type { FuelType } from '../services/fuelTypes';
 import { getErrorMessage } from '../services/api';
 import { Modal } from '../components/Modal';
+import { isSalesClerk, getUsername, getDepartmentCode } from '../services/auth';
 
 const STATUS_TABS: { label: string; value: RequisitionStatus | '' }[] = [
   { label: 'Pending', value: 'PENDING' },
@@ -55,8 +56,12 @@ export const Requisitions: React.FC = () => {
   const [locations, setLocations] = useState<LocationDetail[]>([]);
   const [fuelTypes, setFuelTypes] = useState<FuelType[]>([]);
   const [departmentId, setDepartmentId] = useState('');
+  // The backend raises for the caller's own department; only accounts without one pick it here.
+  const myDepartment = getDepartmentCode();
   const [locationId, setLocationId] = useState('');
-  const [requestedBy, setRequestedBy] = useState<string>(() => localStorage.getItem('username') || '');
+  // A Sales Clerk always raises as themselves, so their dashboard can track what they asked for.
+  const lockRequestedBy = isSalesClerk();
+  const [requestedBy, setRequestedBy] = useState<string>(() => (lockRequestedBy && getUsername()) || localStorage.getItem('username') || '');
   const [unit, setUnit] = useState<'books' | 'litres'>('books');
   const [lines, setLines] = useState<LineInput[]>([{ fuelTypeId: '', denomination: '', books: '', litres: '' }]);
   const [creating, setCreating] = useState(false);
@@ -100,7 +105,7 @@ export const Requisitions: React.FC = () => {
     setLines([{ fuelTypeId: fuelTypes[0]?.id.toString() || '', denomination: '', books: '', litres: '' }]);
     setModalError(null);
     setShowCreate(true);
-    if (departments.length === 0) {
+    if (!myDepartment && departments.length === 0) {
       getDepartments(true).then(res => setDepartments(res.data || [])).catch(() => setDepartments([]));
     }
     if (locations.length === 0) {
@@ -124,8 +129,12 @@ export const Requisitions: React.FC = () => {
   };
 
   const handleCreate = async () => {
-    if (!departmentId || !locationId) {
-      setModalError('Select a department and a location.');
+    if (!myDepartment && !departmentId) {
+      setModalError('Select a department.');
+      return;
+    }
+    if (!locationId) {
+      setModalError('Select a location.');
       return;
     }
     if (!requestedBy.trim()) {
@@ -164,7 +173,7 @@ export const Requisitions: React.FC = () => {
     setModalError(null);
     try {
       const res = await createRequisition({
-        departmentId: parseInt(departmentId, 10),
+        ...(myDepartment ? {} : { departmentId: parseInt(departmentId, 10) }),
         locationId: parseInt(locationId, 10),
         requestedBy: requestedBy.trim(),
         lines: parsedLines
@@ -301,12 +310,16 @@ export const Requisitions: React.FC = () => {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="input-group">
               <label>Department</label>
-              <select className="input-field" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} required>
-                <option value="">Select...</option>
-                {departments.map(d => (
-                  <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
-                ))}
-              </select>
+              {myDepartment ? (
+                <input className="input-field" value={myDepartment} readOnly disabled />
+              ) : (
+                <select className="input-field" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} required>
+                  <option value="">Select...</option>
+                  {departments.map(d => (
+                    <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                  ))}
+                </select>
+              )}
             </div>
             <div className="input-group">
               <label>Location</label>
@@ -321,7 +334,7 @@ export const Requisitions: React.FC = () => {
 
           <div className="input-group">
             <label>Requested By</label>
-            <input className="input-field" value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)} required />
+            <input className="input-field" value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)} readOnly={lockRequestedBy} required />
           </div>
 
           <div className="input-group">

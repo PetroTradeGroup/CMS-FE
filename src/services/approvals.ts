@@ -29,6 +29,8 @@ export interface ApprovalRequest {
   receivedBy: string | null; // set once confirm-receipt is called (department-changing transfers only)
   receivedAt: string | null;
   requisitionId: number | null; // set when this transfer was raised to fulfil a requisition
+  // Who raised that requisition — the real requester. requestedBy is then the Stocks person who fulfilled it.
+  requisitionRequestedBy: string | null;
   // How many coupons this request covers — resolved once at creation from the selection mode used
   // (denomination pick, range, whole batch, or explicit numbers) and stable at every later stage.
   // Prefer this over couponNumbers.length/transferredCoupons.length, which are only populated in

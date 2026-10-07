@@ -2,8 +2,9 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Layout } from './components/layout/Layout';
 import { Login } from './pages/Login';
-import { isAuthenticated, canSee, homePath } from './services/auth';
+import { isAuthenticated, canSee, homePath, isSalesClerk } from './services/auth';
 import { Dashboard } from './pages/Dashboard';
+import { SalesDashboard } from './pages/SalesDashboard';
 import { Coupons } from './pages/Coupons';
 import { GenerateCoupons } from './pages/GenerateCoupons';
 import { FuelTypesManager } from './pages/FuelTypes';
@@ -39,7 +40,7 @@ const App: React.FC = () => {
       <Routes>
         <Route path="/" element={<Login />} />
         <Route element={<RequireAuth />}>
-          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/dashboard" element={isSalesClerk() ? <SalesDashboard /> : <Dashboard />} />
           <Route path="/coupons" element={<Coupons />} />
           <Route path="/coupons/generate" element={<GenerateCoupons />} />
           <Route path="/batches" element={<Batches />} />
