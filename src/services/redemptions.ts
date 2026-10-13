@@ -277,3 +277,79 @@ export const getRedemptions = (page = 0, size = 20, status?: RedemptionStatus, l
 export const getRedemption = (id: number) => {
   return fetchApi<RedemptionRequest>(`/redemptions/${id}`);
 };
+
+// ── Coupon activity report (GET /inventory/activity) ── ADMIN, AUDITOR, STOCKS_CONTROLLER.
+// What moved into each status over the range: per status a total, then the same fuel type →
+// denomination breakdown as the redemption summary. Activity, not a balance.
+export interface CouponActivityStatusSummary {
+  status: CouponStatus;
+  count: number;
+  litres: number;
+  byFuelType: RedemptionFuelTypeSummary[];
+}
+
+export interface CouponActivity {
+  dateFrom: string;
+  dateTo: string;
+  status: CouponStatus | null;
+  locationId: number | null;
+  fuelTypeId: number | null;
+  byStatus: CouponActivityStatusSummary[];
+}
+
+export interface CouponActivityParams extends RedemptionSummaryParams {
+  status?: CouponStatus;
+}
+
+const activityParams = (p: CouponActivityParams) => {
+  const qp = dateParams(p);
+  if (p.status) qp.set('status', p.status);
+  if (p.locationId) qp.set('locationId', String(p.locationId));
+  return qp;
+};
+
+export const getCouponActivity = (params: CouponActivityParams = {}) =>
+  fetchApi<CouponActivity>(withQs('/inventory/activity', activityParams(params)));
+
+export const exportCouponActivity = (params: CouponActivityParams = {}) =>
+  streamDownload(withQs('/inventory/activity/export/excel', activityParams(params)),
+    'coupon-activity.xlsx', 'Failed to export the activity report as Excel');
+
+// ── Balance as at a date (GET /inventory/balance) ── same roles and same CouponActivity shape
+// (dateFrom = dateTo = asAt). IN_STOCK = stock on hand; ALLOCATED = owed (allocated, not yet redeemed).
+export interface CouponBalanceParams {
+  asAt?: string; // ISO date; defaults to today
+  status?: CouponStatus;
+  locationId?: number;
+  fuelTypeId?: number;
+}
+
+const balanceParams = (p: CouponBalanceParams) => {
+  const qp = new URLSearchParams();
+  if (p.asAt) qp.set('asAt', p.asAt);
+  if (p.status) qp.set('status', p.status);
+  if (p.locationId) qp.set('locationId', String(p.locationId));
+  if (p.fuelTypeId) qp.set('fuelTypeId', String(p.fuelTypeId));
+  return qp;
+};
+
+export const getCouponBalance = (params: CouponBalanceParams = {}) =>
+  fetchApi<CouponActivity>(withQs('/inventory/balance', balanceParams(params)));
+
+export const exportCouponBalance = (params: CouponBalanceParams = {}) =>
+  streamDownload(withQs('/inventory/balance/export/excel', balanceParams(params)),
+    'coupon-balance.xlsx', 'Failed to export the balance report as Excel');
+
+// End-of-day litres per status for each day — the dashboard line chart. Defaults to the last 30 days.
+export interface BalanceTrendPoint {
+  date: string;
+  litres: Partial<Record<CouponStatus, number>>;
+}
+
+export const getBalanceTrend = (params: { dateFrom?: string; dateTo?: string; fuelTypeId?: number } = {}) => {
+  const qp = new URLSearchParams();
+  if (params.dateFrom) qp.set('dateFrom', params.dateFrom);
+  if (params.dateTo) qp.set('dateTo', params.dateTo);
+  if (params.fuelTypeId) qp.set('fuelTypeId', String(params.fuelTypeId));
+  return fetchApi<BalanceTrendPoint[]>(withQs('/inventory/balance/trend', qp));
+};

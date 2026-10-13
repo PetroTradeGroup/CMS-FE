@@ -8,6 +8,7 @@ import {
 import { getBulkLimit } from '../services/config';
 import { canSee, hasRole } from '../services/auth';
 import type { BulkLimit } from '../services/config';
+import { VolumeTrend } from '../components/VolumeTrend';
 
 import { getCoupons, getCouponsByFuelType, getStatusBadgeClass } from '../services/coupons';
 import type { Coupon } from '../services/coupons';
@@ -181,6 +182,9 @@ export const Dashboard: React.FC = () => {
         <StatCard label="Fuel Types"      value={stats.totalFuelTypes.toString()}       icon={<Database size={20} />} color="#fff" delay="delay-300" />
         {!isRegionalRep && <StatCard label="Bulk Gen. Limit" value={stats.bulkLimit.toLocaleString()}      icon={<Banknote size={20} />} color={GREEN} delay="delay-300" />}
       </div>
+
+      {/* Stock balance & owed volume over time — same roles the backend allows on /inventory/balance/trend */}
+      {hasRole('ADMIN', 'AUDITOR', 'STOCKS_CONTROLLER') && <VolumeTrend />}
 
       {/* Charts Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem' }}>

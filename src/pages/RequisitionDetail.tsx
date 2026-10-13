@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, AlertCircle, CheckCircle2, X, PackageCheck, Ban, Zap } from 'lucide-react';
+import { ArrowLeft, AlertCircle, CheckCircle2, X, PackageCheck, Ban, Zap, ThumbsUp, Printer } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
-import { getRequisition, fulfillRequisition, rejectRequisition, autoFulfillRequisition } from '../services/requisitions';
+import {
+  getRequisition, fulfillRequisition, rejectRequisition, autoFulfillRequisition,
+  approveRequisitionCommercial, approveRequisitionStocks, requisitionBadge, REQUISITION_STATUS_LABELS
+} from '../services/requisitions';
 import type { Requisition } from '../services/requisitions';
 import { getBatches } from '../services/batches';
 import type { CouponBatch } from '../services/batches';
@@ -10,19 +13,17 @@ import type { CouponStatus } from '../services/coupons';
 import type { ApprovalRequest } from '../services/approvals';
 import { getErrorMessage } from '../services/api';
 import { Modal } from '../components/Modal';
-import { isSalesClerk } from '../services/auth';
+import { hasRole, isCommercialApprover } from '../services/auth';
+import { previewVoucher } from '../utils/grvPdf';
 
-const requisitionBadge = (status: Requisition['status']) => {
-  switch (status) {
-    case 'PENDING': return 'badge-warning';
-    case 'PARTIALLY_FULFILLED': return 'badge-info';
-    case 'FULFILLED': return 'badge-success';
-    default: return 'badge-danger'; // REJECTED
-  }
-};
+// Stocks issue (GIV) only once both Commercial and the Stocks Controller have approved.
+const isIssuable = (status: Requisition['status']) => status === 'APPROVED' || status === 'PARTIALLY_FULFILLED';
 
-// Only FULFILLED/REJECTED are terminal — fulfill and reject both remain callable from PARTIALLY_FULFILLED
-const isOpenForAction = (status: Requisition['status']) => status === 'PENDING' || status === 'PARTIALLY_FULFILLED';
+// Whoever's turn it is rejects: Commercial while PENDING, the Stocks Controller after that.
+const canReject = (status: Requisition['status']) =>
+  status === 'PENDING'
+    ? isCommercialApprover()
+    : (status === 'COMMERCIAL_APPROVED' || isIssuable(status)) && hasRole('STOCKS_CONTROLLER');
 
 interface FulfillLineInput {
   fuelTypeId: number;
@@ -42,6 +43,9 @@ export const RequisitionDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Transfers issued by the last fulfil/auto-fulfil — each is one GIV to print and hand over
+  const [issued, setIssued] = useState<ApprovalRequest[]>([]);
+  const [approving, setApproving] = useState(false);
 
   // Fulfill modal
   const [showFulfill, setShowFulfill] = useState(false);
@@ -180,12 +184,8 @@ export const RequisitionDetail: React.FC = () => {
         performedBy: performedBy.trim()
       });
 
-      if (res.status === 202) {
-        const approval = res.data as ApprovalRequest;
-        setSuccess(`Issued for approval — request #${approval.id}. Litres only count as fulfilled once the receiving department confirms receipt.`);
-      } else {
-        setSuccess('Fulfillment applied.');
-      }
+      setSuccess(`Issued under GIV #${res.data.id} — coupons are in transit. Litres count as fulfilled once the Sales Clerk confirms receipt (GRV).`);
+      setIssued([res.data]);
       setShowFulfill(false);
       await loadRequisition();
     } catch (err) {
@@ -225,15 +225,46 @@ export const RequisitionDetail: React.FC = () => {
       });
       const transferCount = res.data.transfers?.length || 0;
       setSuccess(
-        `Auto-fulfill planned ${transferCount} transfer${transferCount === 1 ? '' : 's'} across the outstanding lines` +
-        ' — each waits in Approvals like a manual fulfill.'
+        `Auto-fulfill issued ${transferCount} GIV${transferCount === 1 ? '' : 's'} across the outstanding lines` +
+        ' — coupons are in transit until the Sales Clerk confirms receipt.'
       );
+      setIssued(res.data.transfers || []);
       setShowAutoFulfill(false);
       await loadRequisition();
     } catch (err) {
       setAutoFulfillError(getErrorMessage(err, 'Failed to auto-fulfil requisition.'));
     } finally {
       setAutoFulfilling(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!requisition) return;
+    setApproving(true);
+    setError(null);
+    setSuccess(null);
+    setIssued([]);
+    try {
+      if (requisition.status === 'PENDING') {
+        await approveRequisitionCommercial(requisition.id);
+        setSuccess('Approved — sent to the Stocks Controller for approval.');
+      } else {
+        await approveRequisitionStocks(requisition.id);
+        setSuccess('Approved — Stocks can now issue the coupons.');
+      }
+      await loadRequisition();
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to approve requisition.'));
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const handlePrintGiv = async (approval: ApprovalRequest) => {
+    try {
+      await previewVoucher(approval, 'GIV');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to generate the GIV.'));
     }
   };
 
@@ -253,6 +284,7 @@ export const RequisitionDetail: React.FC = () => {
     try {
       await rejectRequisition(requisition.id, decidedBy.trim(), rejectReason.trim());
       setSuccess('Requisition rejected.');
+      setIssued([]);
       setShowReject(false);
       await loadRequisition();
     } catch (err) {
@@ -293,22 +325,32 @@ export const RequisitionDetail: React.FC = () => {
         <div>
           <h1>Requisition #{requisition.id}</h1>
           <p style={{ margin: 0 }}>
-            {requisition.department?.name ?? '—'} → {requisition.location?.name ?? '—'} · <span className={`badge ${requisitionBadge(requisition.status)}`}>{requisition.status.replace('_', ' ')}</span>
+            {requisition.department?.name ?? '—'} → {requisition.location?.name ?? '—'} · <span className={`badge ${requisitionBadge(requisition.status)}`}>{REQUISITION_STATUS_LABELS[requisition.status]}</span>
           </p>
         </div>
-        {isOpenForAction(requisition.status) && !isSalesClerk() && (
-          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-            <button className="btn btn-primary" onClick={openAutoFulfill}>
-              <Zap size={18} /> Auto Fulfill
+        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+          {((requisition.status === 'PENDING' && isCommercialApprover())
+            || (requisition.status === 'COMMERCIAL_APPROVED' && hasRole('STOCKS_CONTROLLER'))) && (
+            <button className="btn btn-primary" onClick={handleApprove} disabled={approving}>
+              <ThumbsUp size={18} /> {approving ? 'Approving...' : 'Approve'}
             </button>
-            <button className="btn btn-secondary" onClick={openFulfill}>
-              <PackageCheck size={18} /> Fulfill
-            </button>
+          )}
+          {isIssuable(requisition.status) && hasRole('STOCKS_CLERK', 'STOCKS_CONTROLLER', 'ADMIN') && (
+            <>
+              <button className="btn btn-primary" onClick={openAutoFulfill}>
+                <Zap size={18} /> Auto Fulfill
+              </button>
+              <button className="btn btn-secondary" onClick={openFulfill}>
+                <PackageCheck size={18} /> Fulfill
+              </button>
+            </>
+          )}
+          {canReject(requisition.status) && (
             <button className="btn btn-secondary" style={{ color: 'var(--color-accent-red)' }} onClick={openReject}>
               <Ban size={18} /> Reject
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {error && (
@@ -319,6 +361,11 @@ export const RequisitionDetail: React.FC = () => {
       {success && (
         <div style={{ padding: '1rem', background: 'rgba(74, 222, 128, 0.1)', border: '1px solid #4ade80', borderRadius: '8px', color: '#4ade80', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <CheckCircle2 size={20} /> {success}
+          {issued.map(approval => (
+            <button key={approval.id} className="btn btn-secondary" style={{ marginLeft: 'auto', padding: '0.35rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handlePrintGiv(approval)}>
+              <Printer size={14} /> Print GIV #{approval.id}
+            </button>
+          ))}
         </div>
       )}
 
@@ -341,9 +388,21 @@ export const RequisitionDetail: React.FC = () => {
             <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.25rem' }}>Requested At</div>
             <div style={{ fontWeight: 500 }}>{new Date(requisition.requestedAt).toLocaleString()}</div>
           </div>
+          {requisition.commercialApprovedBy && (
+            <div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.25rem' }}>Commercial Approval</div>
+              <div style={{ fontWeight: 500 }}>{requisition.commercialApprovedBy}{requisition.commercialApprovedAt ? ` on ${new Date(requisition.commercialApprovedAt).toLocaleString()}` : ''}</div>
+            </div>
+          )}
+          {requisition.stocksApprovedBy && (
+            <div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.25rem' }}>Stocks Approval</div>
+              <div style={{ fontWeight: 500 }}>{requisition.stocksApprovedBy}{requisition.stocksApprovedAt ? ` on ${new Date(requisition.stocksApprovedAt).toLocaleString()}` : ''}</div>
+            </div>
+          )}
           {requisition.decidedBy && (
             <div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.25rem' }}>Decided By</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.25rem' }}>Rejected By</div>
               <div style={{ fontWeight: 500 }}>{requisition.decidedBy}{requisition.decidedAt ? ` on ${new Date(requisition.decidedAt).toLocaleString()}` : ''}</div>
             </div>
           )}
@@ -390,8 +449,8 @@ export const RequisitionDetail: React.FC = () => {
           </table>
         </div>
         <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '1rem', marginBottom: 0 }}>
-          Fulfilled litres only update once the receiving department confirms receipt on the resulting transfer
-          (see Approvals) — not at fulfill or approve time.
+          Flow: Sales Clerk raises → Commercial approves → Stocks Controller approves → Stocks Clerk issues (GIV)
+          → Sales Clerk confirms receipt (GRV, on Approvals). Fulfilled litres only update at that last step.
         </p>
       </div>
 
@@ -496,8 +555,8 @@ export const RequisitionDetail: React.FC = () => {
           </div>
 
           <p style={{ fontSize: '0.8rem', color: '#60a5fa', marginBottom: '0.75rem' }}>
-            This moves coupons to the requesting department, so it always defers for supervisor approval,
-            followed by the receiving department confirming receipt.
+            This issues the coupons straight away under a GIV (the Stocks Controller already approved the
+            requisition) — they stay In Transit until the Sales Clerk confirms receipt.
           </p>
           <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
             If the batch has fewer eligible coupons of a denomination than the litres above imply, Stock
@@ -534,8 +593,8 @@ export const RequisitionDetail: React.FC = () => {
 
           <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '1.25rem' }}>
             Plans the whole requisition against its outstanding lines automatically, walking each fuel
-            type's batches oldest-first — no batch or line picking needed. Always defers for approval,
-            one transfer per batch drawn.
+            type's batches oldest-first — no batch or line picking needed. Issues straight away, one GIV
+            per batch drawn.
           </p>
 
           <div className="input-group">

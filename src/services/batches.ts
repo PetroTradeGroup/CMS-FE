@@ -51,13 +51,16 @@ export const getBatch = (id: number) => {
   return fetchApi<CouponBatch>(`/batches/${id}`);
 };
 
-// Moves all GENERATED coupons in the batch to IN_STOCK; locationId defaults to the batch origin
-export const receiveBatch = (id: number, performedBy?: string, locationId?: number) => {
+// Moves GENERATED coupons in the batch to IN_STOCK; locationId defaults to the batch origin.
+// books (inclusive book numbers) receives only part of a batch — a partial supplier delivery.
+export const receiveBatch = (id: number, performedBy?: string, locationId?: number,
+                             books?: { fromBook: number; toBook: number }) => {
   return fetchApi<CouponBatch>(`/batches/${id}/receive`, {
     method: 'POST',
     body: JSON.stringify({
       locationId: locationId ?? null,
-      ...(performedBy ? { performedBy } : {})
+      ...(performedBy ? { performedBy } : {}),
+      ...(books ?? {})
     })
   });
 };

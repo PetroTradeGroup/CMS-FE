@@ -4,8 +4,9 @@ import { getApprovals, getApproval, approveRequest, confirmReceipt, rejectReques
 import type { ApprovalRequest, ApprovalStatus } from '../services/approvals';
 import { ApiError, getErrorMessage } from '../services/api';
 import { Modal } from '../components/Modal';
-import { generateGrvPdf } from '../utils/grvPdf';
-import { hasRole, isCommercialManager } from '../services/auth';
+import { previewVoucher } from '../utils/grvPdf';
+import type { VoucherKind } from '../utils/grvPdf';
+import { hasRole, canReceiveRequisitionIssue } from '../services/auth';
 
 const STATUS_TABS: { label: string; value: ApprovalStatus | '' }[] = [
   { label: 'Pending', value: 'PENDING' },
@@ -51,12 +52,16 @@ const describeSubject = (req: ApprovalRequest) => {
 // A requisition's transfer is requested by whoever raised the requisition, not the Stocks fulfiller.
 const requesterOf = (req: ApprovalRequest) => req.requisitionRequestedBy ?? req.requestedBy;
 
-// A requisition's receipt is confirmed by the Commercial Manager only; other transfers keep the old rules.
-const canConfirm = (req: ApprovalRequest) => req.requisitionId == null || isCommercialManager();
+// A requisition's receipt (GRV) is confirmed by the Sales Clerk only; other transfers keep the old rules.
+const canConfirm = (req: ApprovalRequest) => req.requisitionId == null || canReceiveRequisitionIssue();
+
+// A GIV exists once Stocks has issued — the transfer is In Transit or already received.
+const hasGiv = (req: ApprovalRequest) => req.status === 'TRANSFERSHIPMENT' || req.status === 'TRANSRECEIPT';
 
 export const Approvals: React.FC = () => {
-  // A Commercial Manager only receives — no approve/reject — and lands on what's In Transit.
-  const canDecide = !isCommercialManager() || hasRole('ADMIN', 'STOCKS_CONTROLLER');
+  // Same roles the backend lets approve/reject. Everyone else (Sales Clerk, Stocks Clerk, Commercial
+  // Manager) only receives or reprints vouchers, and lands on what's In Transit.
+  const canDecide = hasRole('ADMIN', 'STOCKS_CONTROLLER', 'REGIONAL_REP');
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +76,7 @@ export const Approvals: React.FC = () => {
   const [detailRequest, setDetailRequest] = useState<ApprovalRequest | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [printingGrvId, setPrintingGrvId] = useState<number | null>(null);
+  const [printing, setPrinting] = useState<string | null>(null); // `${kind}-${id}` of the voucher being built
 
   // Decision modal
   const [selected, setSelected] = useState<ApprovalRequest | null>(null);
@@ -118,26 +123,30 @@ export const Approvals: React.FC = () => {
 
   const closeDetail = () => setDetailRequest(null);
 
-  const handlePrintGrv = async (req: ApprovalRequest) => {
-    // Open the tab synchronously, inside the click handler — opening it after the await below
-    // would no longer count as a user gesture to most browsers and get popup-blocked.
-    const previewWindow = window.open('', '_blank');
-    setPrintingGrvId(req.id);
+  const handlePrint = async (req: ApprovalRequest, kind: VoucherKind) => {
+    setPrinting(`${kind}-${req.id}`);
     setError(null);
     try {
-      const url = await generateGrvPdf(req);
-      if (previewWindow) {
-        previewWindow.location.href = url;
-      } else {
-        setError('The GRV preview was blocked by the browser — allow pop-ups for this site and try again.');
-      }
+      await previewVoucher(req, kind);
     } catch (err) {
-      previewWindow?.close();
-      setError(getErrorMessage(err, 'Failed to generate the GRV.'));
+      setError(getErrorMessage(err, `Failed to generate the ${kind}.`));
     } finally {
-      setPrintingGrvId(null);
+      setPrinting(null);
     }
   };
+
+  const printButton = (req: ApprovalRequest, kind: VoucherKind, large = false) => (
+    <button
+      key={kind}
+      className={`btn ${large ? 'btn-primary' : 'btn-secondary'}`}
+      style={large ? { flex: 1 } : { padding: '0.35rem 0.8rem', fontSize: '0.8rem' }}
+      onClick={() => handlePrint(req, kind)}
+      disabled={printing === `${kind}-${req.id}`}
+      title={kind === 'GIV' ? 'Print Goods Issued Voucher' : 'Print Goods Received Voucher'}
+    >
+      <Printer size={large ? 16 : 14} /> {printing === `${kind}-${req.id}` ? 'Preparing...' : `Print ${kind}`}
+    </button>
+  );
 
   const openDecision = (req: ApprovalRequest, kind: 'approve' | 'reject' | 'confirm-receipt') => {
     setDetailRequest(null);
@@ -283,20 +292,16 @@ export const Approvals: React.FC = () => {
                             Reject
                           </button>
                         </div>
-                      ) : req.status === 'TRANSFERSHIPMENT' && canConfirm(req) ? (
-                        <button className="btn btn-primary" style={{ padding: '0.35rem 0.8rem', fontSize: '0.8rem' }} onClick={() => openDecision(req, 'confirm-receipt')}>
-                          Confirm Receipt
-                        </button>
-                      ) : req.status === 'TRANSRECEIPT' ? (
-                        <button
-                          className="btn btn-secondary"
-                          style={{ padding: '0.35rem 0.8rem', fontSize: '0.8rem' }}
-                          onClick={() => handlePrintGrv(req)}
-                          disabled={printingGrvId === req.id}
-                          title="Print Goods Received Voucher"
-                        >
-                          <Printer size={14} /> {printingGrvId === req.id ? 'Preparing...' : 'Print GRV'}
-                        </button>
+                      ) : hasGiv(req) ? (
+                        <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
+                          {req.status === 'TRANSFERSHIPMENT' && canConfirm(req) && (
+                            <button className="btn btn-primary" style={{ padding: '0.35rem 0.8rem', fontSize: '0.8rem' }} onClick={() => openDecision(req, 'confirm-receipt')}>
+                              Confirm Receipt
+                            </button>
+                          )}
+                          {printButton(req, 'GIV')}
+                          {req.status === 'TRANSRECEIPT' && printButton(req, 'GRV')}
+                        </div>
                       ) : (
                         <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
                           {req.decisionReason || '—'}
@@ -420,20 +425,15 @@ export const Approvals: React.FC = () => {
                     Reject
                   </button>
                 </>
-              ) : detailRequest.status === 'TRANSFERSHIPMENT' && canConfirm(detailRequest) ? (
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => openDecision(detailRequest, 'confirm-receipt')}>
-                  Confirm Receipt
-                </button>
-              ) : detailRequest.status === 'TRANSRECEIPT' ? (
+              ) : hasGiv(detailRequest) ? (
                 <>
-                  <button
-                    className="btn btn-primary"
-                    style={{ flex: 1 }}
-                    onClick={() => handlePrintGrv(detailRequest)}
-                    disabled={printingGrvId === detailRequest.id}
-                  >
-                    <Printer size={16} /> {printingGrvId === detailRequest.id ? 'Preparing...' : 'Print GRV'}
-                  </button>
+                  {detailRequest.status === 'TRANSFERSHIPMENT' && canConfirm(detailRequest) && (
+                    <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => openDecision(detailRequest, 'confirm-receipt')}>
+                      Confirm Receipt
+                    </button>
+                  )}
+                  {printButton(detailRequest, 'GIV', true)}
+                  {detailRequest.status === 'TRANSRECEIPT' && printButton(detailRequest, 'GRV', true)}
                   <button className="btn btn-secondary" style={{ flex: 1 }} onClick={closeDetail}>
                     Close
                   </button>

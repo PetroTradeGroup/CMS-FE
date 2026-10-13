@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ClipboardList, Plus, X, AlertCircle, CheckCircle2, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getRequisitions, createRequisition } from '../services/requisitions';
+import { getRequisitions, createRequisition, requisitionBadge, REQUISITION_STATUS_LABELS } from '../services/requisitions';
 import type { Requisition, RequisitionStatus, RequisitionLineRequest } from '../services/requisitions';
 import { getDepartments } from '../services/departments';
 import type { Department } from '../services/departments';
@@ -11,23 +11,20 @@ import { getActiveFuelTypes } from '../services/fuelTypes';
 import type { FuelType } from '../services/fuelTypes';
 import { getErrorMessage } from '../services/api';
 import { Modal } from '../components/Modal';
-import { isSalesClerk, getUsername, getDepartmentCode } from '../services/auth';
+import { isSalesClerk, getUsername, getDepartmentCode, hasRole, isCommercialApprover } from '../services/auth';
 
 const STATUS_TABS: { label: string; value: RequisitionStatus | '' }[] = [
-  { label: 'Pending', value: 'PENDING' },
-  { label: 'Partially Fulfilled', value: 'PARTIALLY_FULFILLED' },
-  { label: 'Fulfilled', value: 'FULFILLED' },
-  { label: 'Rejected', value: 'REJECTED' },
+  ...(Object.keys(REQUISITION_STATUS_LABELS) as RequisitionStatus[])
+    .map(value => ({ label: REQUISITION_STATUS_LABELS[value], value })),
   { label: 'All', value: '' },
 ];
 
-const requisitionBadge = (status: RequisitionStatus) => {
-  switch (status) {
-    case 'PENDING': return 'badge-warning';
-    case 'PARTIALLY_FULFILLED': return 'badge-info';
-    case 'FULFILLED': return 'badge-success';
-    default: return 'badge-danger'; // REJECTED
-  }
+// Open on the queue that's waiting for this user's step of the approval chain.
+const defaultTab = (): RequisitionStatus | '' => {
+  if (isCommercialApprover()) return 'PENDING';
+  if (hasRole('STOCKS_CONTROLLER')) return 'COMMERCIAL_APPROVED';
+  if (hasRole('STOCKS_CLERK')) return 'APPROVED';
+  return '';
 };
 
 interface LineInput {
@@ -45,7 +42,7 @@ export const Requisitions: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [statusTab, setStatusTab] = useState<RequisitionStatus | ''>('PENDING');
+  const [statusTab, setStatusTab] = useState<RequisitionStatus | ''>(defaultTab);
   const [page, setPage] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
@@ -200,9 +197,11 @@ export const Requisitions: React.FC = () => {
           <h1>Requisitions</h1>
           <p style={{ margin: 0 }}>A department's request to Stock for coupons, in litres per fuel type and denomination.</p>
         </div>
-        <button className="btn btn-primary" onClick={openCreate}>
-          <Plus size={18} /> New Requisition
-        </button>
+        {hasRole('SALES_CLERK', 'ACCOUNTS_CLERK', 'ADMIN') && (
+          <button className="btn btn-primary" onClick={openCreate}>
+            <Plus size={18} /> New Requisition
+          </button>
+        )}
       </div>
 
       {error && (
@@ -260,7 +259,7 @@ export const Requisitions: React.FC = () => {
                       {new Date(req.requestedAt).toLocaleString()}
                     </td>
                     <td>
-                      <span className={`badge ${requisitionBadge(req.status)}`}>{req.status.replace('_', ' ')}</span>
+                      <span className={`badge ${requisitionBadge(req.status)}`}>{REQUISITION_STATUS_LABELS[req.status]}</span>
                     </td>
                   </tr>
                 ))}

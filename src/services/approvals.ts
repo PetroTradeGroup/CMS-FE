@@ -37,6 +37,10 @@ export interface ApprovalRequest {
   // specific cases (couponNumbers: TRANSITION or a pinned denomination-pick TRANSFER;
   // transferredCoupons: only the response of the one call that just moved coupons).
   count: number;
+  // Batch positions (ascending) and distinct book numbers within the batch of the coupons covered —
+  // also fixed at creation and correct at every stage. What the GIV/GRV print for counting.
+  batchSequences: number[];
+  bookNumbers: number[];
   // Same "fixed at creation, correct at every stage" reasoning as count — a per-denomination
   // breakdown of the already-resolved coupon list, computed once when the request is created.
   // Reliable through PENDING → TRANSFERSHIPMENT → TRANSRECEIPT, unlike deriving it from

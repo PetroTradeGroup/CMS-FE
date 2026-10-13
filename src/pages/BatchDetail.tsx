@@ -25,6 +25,12 @@ export const BatchDetail: React.FC = () => {
   const [batch, setBatch] = useState<CouponBatch | null>(null);
   const [loading, setLoading] = useState(true);
   const [receiving, setReceiving] = useState(false);
+  // Receive modal — whole batch, or a book range for a partial supplier delivery
+  const [showReceive, setShowReceive] = useState(false);
+  const [receiveMode, setReceiveMode] = useState<'all' | 'books'>('all');
+  const [fromBook, setFromBook] = useState('');
+  const [toBook, setToBook] = useState('');
+  const [receiveError, setReceiveError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadingCsv, setDownloadingCsv] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,18 +98,38 @@ export const BatchDetail: React.FC = () => {
     loadBatch();
   }, [batchId, loadBatch]);
 
+  const openReceive = () => {
+    setReceiveMode('all');
+    setFromBook('');
+    setToBook('');
+    setReceiveError(null);
+    setShowReceive(true);
+  };
+
   const handleReceive = async () => {
     if (!batch) return;
+    let books: { fromBook: number; toBook: number } | undefined;
+    if (receiveMode === 'books') {
+      const from = Number(fromBook);
+      const to = Number(toBook);
+      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || from > to) {
+        setReceiveError('Enter whole book numbers, from ≥ 1 and from ≤ to.');
+        return;
+      }
+      books = { fromBook: from, toBook: to };
+    }
     setReceiving(true);
+    setReceiveError(null);
     setError(null);
     setSuccess(null);
     try {
       const performedBy = localStorage.getItem('username') || undefined;
-      await receiveBatch(batch.id, performedBy);
-      setSuccess('Batch received into stock.');
+      await receiveBatch(batch.id, performedBy, undefined, books);
+      setSuccess(books ? `Books ${books.fromBook}–${books.toBook} received into stock.` : 'Batch received into stock.');
+      setShowReceive(false);
       await loadBatch();
     } catch (err) {
-      setError(getErrorMessage(err, 'Failed to receive batch.'));
+      setReceiveError(getErrorMessage(err, 'Failed to receive batch.'));
     } finally {
       setReceiving(false);
     }
@@ -280,9 +306,9 @@ export const BatchDetail: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
           {generatedCount > 0 && (
-            <button className="btn btn-primary" onClick={handleReceive} disabled={receiving}>
+            <button className="btn btn-primary" onClick={openReceive}>
               <PackageCheck size={18} />
-              {receiving ? 'Receiving...' : `Receive into stock (${generatedCount})`}
+              {`Receive into stock (${generatedCount})`}
             </button>
           )}
           {transferEligibleCount > 0 && (
@@ -416,6 +442,81 @@ export const BatchDetail: React.FC = () => {
           <p style={{ padding: '1.5rem 2rem', color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>No coupons found for this batch.</p>
         )}
       </div>
+
+      {/* Receive modal */}
+      {showReceive && (
+        <Modal onClose={() => setShowReceive(false)} width="min(480px, 92vw)">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3 style={{ margin: 0, color: 'var(--color-accent-gold)' }}>Receive {batch.batchNumber}</h3>
+              <button className="btn btn-secondary" style={{ padding: '0.3rem 0.5rem' }} onClick={() => setShowReceive(false)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {receiveError && (
+              <div style={{ padding: '0.75rem 1rem', background: 'rgba(208, 76, 87, 0.1)', border: '1px solid var(--color-accent-red)', borderRadius: '8px', color: 'var(--color-accent-red)', marginBottom: '1.25rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <AlertCircle size={16} /> {receiveError}
+              </div>
+            )}
+
+            <div className="input-group">
+              <label>What arrived?</label>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                {([
+                  ['all', `Everything outstanding (${generatedCount})`],
+                  ['books', 'Book range (partial)'],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`btn ${receiveMode === mode ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.85rem' }}
+                    onClick={() => setReceiveMode(mode)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {receiveMode === 'books' && (
+                <>
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <input
+                      type="number"
+                      className="input-field"
+                      placeholder="From book"
+                      min={1}
+                      value={fromBook}
+                      onChange={(e) => setFromBook(e.target.value)}
+                    />
+                    <span style={{ color: 'var(--color-text-muted)' }}>→</span>
+                    <input
+                      type="number"
+                      className="input-field"
+                      placeholder="To book"
+                      min={1}
+                      value={toBook}
+                      onChange={(e) => setToBook(e.target.value)}
+                    />
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
+                    Use the book numbers printed on the books the supplier delivered, inclusive on both ends.
+                    The rest stay Generated, ready to receive when the next delivery arrives.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleReceive} disabled={receiving}>
+                {receiving ? 'Receiving...' : 'Receive into stock'}
+              </button>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowReceive(false)} disabled={receiving}>
+                Cancel
+              </button>
+            </div>
+        </Modal>
+      )}
 
       {/* Transfer modal */}
       {showTransfer && (

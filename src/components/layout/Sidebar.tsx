@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Banknote, Settings, LogOut, Database, ChevronLeft, ChevronRight, Sparkles, Package, Building2, ClipboardCheck, ClipboardList, Receipt, ShoppingCart, UserPlus, MapPin, ScrollText } from 'lucide-react';
+import { LayoutDashboard, Banknote, Settings, LogOut, Database, ChevronLeft, ChevronRight, Sparkles, Package, Building2, ClipboardCheck, ClipboardList, Receipt, ShoppingCart, UserPlus, MapPin, ScrollText, BarChart3 } from 'lucide-react';
 import logo from '../../assets/logo.jpg';
 import { logout, hasRole, canSee } from '../../services/auth';
 
@@ -13,6 +13,7 @@ const NAV_ITEMS: { to: string; label: string; icon: typeof LayoutDashboard; role
   { to: '/requisitions', label: 'Requisitions', icon: ClipboardList },
   { to: '/redemptions', label: 'Redemptions', icon: Receipt },
   { to: '/approvals', label: 'Approvals', icon: ClipboardCheck },
+  { to: '/reports/activity', label: 'Volume Report', icon: BarChart3, roles: ['ADMIN', 'AUDITOR', 'STOCKS_CONTROLLER'] },
   { to: '/erp-sales', label: 'ERP Sales', icon: ShoppingCart },
   { to: '/audit', label: 'Audit Log', icon: ScrollText, roles: ['ADMIN', 'AUDITOR'] },
   { to: '/departments', label: 'Departments', icon: Building2 },

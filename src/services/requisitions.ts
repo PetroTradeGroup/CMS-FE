@@ -2,13 +2,34 @@ import { fetchApi } from './api';
 import type { PagedResponse } from './api';
 import type { Location, CouponStatus, FuelType } from './coupons';
 import type { Department } from './departments';
-import type { TransferResult } from './batches';
 import type { ApprovalRequest } from './approvals';
 
-// PENDING → (PARTIALLY_FULFILLED)* → FULFILLED, or REJECTED from PENDING or PARTIALLY_FULFILLED.
-// PARTIALLY_FULFILLED means at least one delivery has been received but at least one line still
-// has litres outstanding — fulfill (against this or another batch) and reject both remain callable.
-export type RequisitionStatus = 'PENDING' | 'PARTIALLY_FULFILLED' | 'FULFILLED' | 'REJECTED';
+// PENDING (Sales Clerk raised) → COMMERCIAL_APPROVED (Commercial Manager/Rep) → APPROVED (Stocks
+// Controller) → (PARTIALLY_FULFILLED)* → FULFILLED, or REJECTED from any non-terminal status.
+// Stocks issue (GIV) only from APPROVED/PARTIALLY_FULFILLED; PARTIALLY_FULFILLED means at least one
+// delivery has been received but a line still has litres outstanding.
+export type RequisitionStatus =
+  'PENDING' | 'COMMERCIAL_APPROVED' | 'APPROVED' | 'PARTIALLY_FULFILLED' | 'FULFILLED' | 'REJECTED';
+
+export const REQUISITION_STATUS_LABELS: Record<RequisitionStatus, string> = {
+  PENDING: 'Awaiting Commercial',
+  COMMERCIAL_APPROVED: 'Awaiting Stocks',
+  APPROVED: 'Approved',
+  PARTIALLY_FULFILLED: 'Partially Fulfilled',
+  FULFILLED: 'Fulfilled',
+  REJECTED: 'Rejected',
+};
+
+export const requisitionBadge = (status: RequisitionStatus) => {
+  switch (status) {
+    case 'PENDING':
+    case 'COMMERCIAL_APPROVED': return 'badge-warning';
+    case 'APPROVED':
+    case 'PARTIALLY_FULFILLED': return 'badge-info';
+    case 'FULFILLED': return 'badge-success';
+    default: return 'badge-danger'; // REJECTED
+  }
+};
 
 export interface RequisitionLine {
   fuelType: FuelType;
@@ -29,7 +50,11 @@ export interface Requisition {
   requestedBy: string;
   requestedAt: string;
   status: RequisitionStatus;
-  decidedBy: string | null;
+  commercialApprovedBy: string | null;
+  commercialApprovedAt: string | null;
+  stocksApprovedBy: string | null;
+  stocksApprovedAt: string | null;
+  decidedBy: string | null; // who rejected it, if anyone
   decidedAt: string | null;
   decisionReason: string | null;
 }
@@ -74,21 +99,33 @@ export interface FulfillRequisitionRequest {
   performedBy: string;
 }
 
-// Builds and submits the underlying transfer automatically — no litres-to-coupon-count math needed
-// on the FE. Always defers for approval (202) in practice; the line's fulfilledLitres only increases
-// once the receiving department calls confirmReceipt on the resulting transfer, not at fulfill/approve time.
+// The Stocks Clerk's issue (GIV) — only from APPROVED/PARTIALLY_FULFILLED (409 otherwise). Builds the
+// underlying transfer and, since the Stocks Controller already approved the requisition, issues it
+// straight away: the response is the transfer, already TRANSFERSHIPMENT (coupons In Transit). The
+// line's fulfilledLitres only increases once the Sales Clerk confirms receipt (GRV) on that transfer.
 // A line doesn't have to fully clear against the named batch — if it has fewer eligible coupons of a
 // denomination than the litres requested imply, Stock still gets what's available (the rest stays
 // outstanding); this only fails (400) if the batch has zero eligible coupons for every requested line,
 // or if the batch's fuel type doesn't match a requested line's fuel type.
 export const fulfillRequisition = (id: number, request: FulfillRequisitionRequest) => {
-  return fetchApi<TransferResult | ApprovalRequest>(`/requisitions/${id}/fulfill`, {
+  return fetchApi<ApprovalRequest>(`/requisitions/${id}/fulfill`, {
     method: 'POST',
     body: JSON.stringify(request)
   });
 };
 
-// reason is required by the backend. Valid while PENDING or PARTIALLY_FULFILLED.
+// Commercial Manager / Rep's sign-off on a PENDING requisition. Approver comes from the token.
+export const approveRequisitionCommercial = (id: number) => {
+  return fetchApi<Requisition>(`/requisitions/${id}/commercial-approve`, { method: 'POST' });
+};
+
+// Stocks Controller's sign-off on a COMMERCIAL_APPROVED requisition. Approver comes from the token.
+export const approveRequisitionStocks = (id: number) => {
+  return fetchApi<Requisition>(`/requisitions/${id}/approve`, { method: 'POST' });
+};
+
+// reason is required by the backend. Commercial rejects while PENDING; the Stocks Controller from
+// COMMERCIAL_APPROVED onwards (closing out the rest of a PARTIALLY_FULFILLED one).
 export const rejectRequisition = (id: number, decidedBy: string, reason: string) => {
   return fetchApi<Requisition>(`/requisitions/${id}/reject`, {
     method: 'POST',
@@ -102,16 +139,14 @@ export interface AutoFulfillRequisitionRequest {
   targetStatus?: CouponStatus;
 }
 
-// Response shape is a best guess pending a real payload to confirm against — the requisition's
-// updated state plus one deferred transfer per batch it drew from.
+// The requisition's updated state plus one issued (In Transit) transfer — one GIV — per batch drawn from.
 export interface AutoFulfillResult {
   requisition: Requisition;
   transfers: ApprovalRequest[];
 }
 
 // Plans the whole requisition against its outstanding lines, walking each fuel type's batches
-// oldest-first. Always 202 — one deferred transfer per batch drawn, same approval flow as a manual
-// fulfill (see Approvals). No batch/line picking needed on the FE.
+// oldest-first, and issues straight away — same as a manual fulfill. No batch/line picking needed.
 export const autoFulfillRequisition = (id: number, request: AutoFulfillRequisitionRequest) => {
   return fetchApi<AutoFulfillResult>(`/requisitions/${id}/auto-fulfill`, {
     method: 'POST',

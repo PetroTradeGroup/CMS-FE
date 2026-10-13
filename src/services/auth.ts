@@ -38,19 +38,25 @@ const STOCKS_PAGES = ['/dashboard', '/coupons/*', '/batches/*', '/requisitions/*
 const ROLE_PAGES: Record<string, string[]> = {
   ATTENDANT: ['/redemptions/*'],
   TEAM_LEADER: ['/redemptions/*', '/attendants/register'],
-  STOCKS_CONTROLLER: [...STOCKS_PAGES, '/approvals'],
-  STOCKS_CLERK: STOCKS_PAGES,
+  STOCKS_CONTROLLER: [...STOCKS_PAGES, '/approvals', '/reports/activity'],
+  // Approvals is where the clerk reprints the GIV for what they issued.
+  STOCKS_CLERK: [...STOCKS_PAGES, '/approvals'],
   FINANCE: ['/dashboard', '/erp-sales'], // Dashboard without Recent Coupons (see Dashboard.tsx)
   // Cut-down Dashboard (see Dashboard.tsx), redemptions across all sites, and the Report page.
-  REGIONAL_REP: ['/dashboard', '/redemptions', '/redemptions/summary', '/ai'],
-  // Raises requisitions and tracks them on SalesDashboard.tsx; Fuel Types is view-only for them.
-  SALES_CLERK: ['/dashboard', '/requisitions/*', '/fuel-types'],
-  // Receiving side of a requisition: confirms receipt of In Transit coupons on Approvals.
-  COMMERCIAL_MANAGER: ['/approvals'],
+  // Also gives Commercial's first approval on requisitions, alongside the Commercial Manager.
+  REGIONAL_REP: ['/dashboard', '/redemptions', '/redemptions/summary', '/ai', '/requisitions/*'],
+  // Only their own work: raises requisitions, and confirms receipt (GRV) of what Stocks issued
+  // against them — both on SalesDashboard.tsx. The backend scopes both lists to the caller.
+  SALES_CLERK: ['/dashboard', '/requisitions/*'],
+  // Gives Commercial's first approval on requisitions.
+  COMMERCIAL_MANAGER: ['/requisitions/*', '/approvals'],
 };
 
-// Only a Commercial Manager may confirm receipt on a requisition's transfer (backend: 403 otherwise).
-export const isCommercialManager = (): boolean => hasRole('COMMERCIAL_MANAGER');
+// Commercial's first sign-off on a requisition (backend: 403 otherwise).
+export const isCommercialApprover = (): boolean => hasRole('COMMERCIAL_MANAGER', 'REGIONAL_REP');
+
+// Only a Sales Clerk may confirm receipt on a requisition's issue (backend: 403 otherwise).
+export const canReceiveRequisitionIssue = (): boolean => hasRole('SALES_CLERK');
 
 // Sales Clerk only raises requisitions — no fulfil/reject, no fuel type edits.
 export const isSalesClerk = (): boolean => hasRole('SALES_CLERK') && !hasRole('ADMIN');
@@ -62,7 +68,7 @@ export const canSee = (path: string): boolean => {
 };
 
 // Where to land after login or after being bounced from a page the user can't open.
-export const homePath = (): string => ['/dashboard', '/approvals'].find(canSee) ?? '/redemptions';
+export const homePath = (): string => ['/dashboard', '/requisitions', '/approvals'].find(canSee) ?? '/redemptions';
 
 // The Keycloak username (preferred_username claim) — the value the backend records as
 // requestedBy / performedBy and scopes an Attendant's own view by.

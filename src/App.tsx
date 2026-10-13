@@ -19,6 +19,7 @@ import { RequisitionDetail } from './pages/RequisitionDetail';
 import { Redemptions } from './pages/Redemptions';
 import { RedemptionScan } from './pages/RedemptionScan';
 import { RedemptionSummary } from './pages/RedemptionSummary';
+import { ActivityReport } from './pages/ActivityReport';
 import { ErpSales } from './pages/ErpSales';
 import { AuditLog } from './pages/AuditLog';
 import { Settings } from './pages/Settings';
@@ -54,6 +55,7 @@ const App: React.FC = () => {
           <Route path="/redemptions" element={<Redemptions />} />
           <Route path="/redemptions/scan" element={<RedemptionScan />} />
           <Route path="/redemptions/summary" element={<RedemptionSummary />} />
+          <Route path="/reports/activity" element={<ActivityReport />} />
           <Route path="/erp-sales" element={<ErpSales />} />
           <Route path="/audit" element={<AuditLog />} />
           <Route path="/fuel-types" element={<FuelTypesManager />} />

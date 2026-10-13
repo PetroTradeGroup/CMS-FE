@@ -203,6 +203,20 @@ export const Coupons: React.FC = () => {
         'Book Number': c.bookNumber ?? '',
         'Created At': new Date(c.createdAt).toLocaleString()
       })));
+      // Total volume under the lines: per fuel type, then overall (digital coupons carry no litres).
+      const byFuel = new Map<string, { count: number; litres: number }>();
+      for (const c of dataToExport) {
+        const t = byFuel.get(c.fuelType.name) ?? { count: 0, litres: 0 };
+        t.count++;
+        t.litres += c.denomination > 0 ? c.denomination : 0;
+        byFuel.set(c.fuelType.name, t);
+      }
+      const totalLitres = [...byFuel.values()].reduce((sum, t) => sum + t.litres, 0);
+      XLSX.utils.sheet_add_aoa(ws, [
+        [],
+        ...[...byFuel].map(([name, t]) => [`Total ${name}`, `${t.count} coupons`, t.litres]),
+        ['TOTAL', `${dataToExport.length} coupons`, totalLitres],
+      ], { origin: -1 });
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Coupons");
       XLSX.writeFile(wb, `Coupons_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
