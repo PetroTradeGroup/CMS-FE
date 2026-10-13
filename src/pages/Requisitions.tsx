@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ClipboardList, Plus, X, AlertCircle, CheckCircle2, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getRequisitions, createRequisition, requisitionBadge, REQUISITION_STATUS_LABELS } from '../services/requisitions';
@@ -10,6 +10,7 @@ import type { LocationDetail } from '../services/locations';
 import { getActiveFuelTypes } from '../services/fuelTypes';
 import type { FuelType } from '../services/fuelTypes';
 import { getErrorMessage } from '../services/api';
+import { useResetPage } from '../utils/useResetPage';
 import { Modal } from '../components/Modal';
 import { isSalesClerk, getUsername, getDepartmentCode, hasRole, isCommercialApprover } from '../services/auth';
 
@@ -65,36 +66,33 @@ export const Requisitions: React.FC = () => {
   const [modalError, setModalError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const loadRequisitions = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await getRequisitions(page, 20, statusTab || undefined);
-      setRequisitions(res.data?.content || []);
-      setTotalPages(res.data?.totalPages || 0);
-      setTotalElements(res.data?.totalElements || 0);
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load requisitions.'));
-    } finally {
-      setLoading(false);
-    }
-  };
+  // State is set only in the promise callbacks (react-hooks/set-state-in-effect).
+  const loadRequisitions = useCallback(() =>
+    getRequisitions(page, 20, statusTab || undefined)
+      .then(res => {
+        setRequisitions(res.data?.content || []);
+        setTotalPages(res.data?.totalPages || 0);
+        setTotalElements(res.data?.totalElements || 0);
+        setError(null);
+      })
+      .catch(err => setError(getErrorMessage(err, 'Failed to load requisitions.')))
+      .finally(() => setLoading(false)),
+  [page, statusTab]);
 
   useEffect(() => {
     loadRequisitions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, statusTab]);
+  }, [loadRequisitions]);
 
-  useEffect(() => {
-    setPage(0);
-  }, [statusTab]);
+  useResetPage(String(statusTab), setPage);
 
-  // Backfill any line still missing a fuel type once the list finishes loading — openCreate/addLine
-  // can run before the fetch resolves, leaving a line's fuelTypeId stuck on the empty placeholder.
-  useEffect(() => {
-    if (fuelTypes.length === 0) return;
-    setLines(prev => prev.map(l => (l.fuelTypeId ? l : { ...l, fuelTypeId: fuelTypes[0].id.toString() })));
-  }, [fuelTypes]);
+  // Once fuel types arrive, backfill any line still missing one — openCreate/addLine can run before
+  // the fetch resolves, leaving a line's fuelTypeId stuck on the empty placeholder.
+  const receiveFuelTypes = (list: FuelType[]) => {
+    setFuelTypes(list);
+    if (list.length > 0) {
+      setLines(prev => prev.map(l => (l.fuelTypeId ? l : { ...l, fuelTypeId: list[0].id.toString() })));
+    }
+  };
 
   const openCreate = async () => {
     setDepartmentId('');
@@ -109,7 +107,7 @@ export const Requisitions: React.FC = () => {
       getLocations(true).then(res => setLocations(res.data || [])).catch(() => setLocations([]));
     }
     if (fuelTypes.length === 0) {
-      getActiveFuelTypes(0, 100).then(res => setFuelTypes(res.data?.content || [])).catch(() => setFuelTypes([]));
+      getActiveFuelTypes(0, 100).then(res => receiveFuelTypes(res.data?.content || [])).catch(() => setFuelTypes([]));
     }
   };
 

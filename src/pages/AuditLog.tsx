@@ -6,6 +6,7 @@ import {
 import type { AuditEntry, AuditCategory, AuditFilters } from '../services/audit';
 import { hasRole } from '../services/auth';
 import { getErrorMessage } from '../services/api';
+import { useResetPage } from '../utils/useResetPage';
 
 export const AuditLog: React.FC = () => {
   const allowed = hasRole('ADMIN', 'AUDITOR');
@@ -55,9 +56,7 @@ export const AuditLog: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    setPage(0);
-  }, [categoryFilter, dateFrom, dateTo, pageSize, actorFilter]);
+  useResetPage(JSON.stringify([categoryFilter, dateFrom, dateTo, pageSize, actorFilter]), setPage);
 
   useEffect(() => {
     if (!allowed) return;

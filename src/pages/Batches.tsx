@@ -6,6 +6,7 @@ import type { CouponBatch, BatchFilters } from '../services/batches';
 import { getFuelTypes } from '../services/fuelTypes';
 import type { FuelType } from '../services/fuelTypes';
 import { getErrorMessage } from '../services/api';
+import { useResetPage } from '../utils/useResetPage';
 
 export const Batches: React.FC = () => {
   const navigate = useNavigate();
@@ -57,9 +58,7 @@ export const Batches: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    setPage(0);
-  }, [fuelTypeFilter, couponTypeFilter, dateFrom, dateTo, hasStockFilter, batchNumberFilter]);
+  useResetPage(JSON.stringify([fuelTypeFilter, couponTypeFilter, dateFrom, dateTo, hasStockFilter, batchNumberFilter]), setPage);
 
   useEffect(() => {
     const fetchData = async () => {

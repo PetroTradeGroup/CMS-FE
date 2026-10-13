@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, Edit2, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { 
   getFuelTypes, 
@@ -30,23 +30,21 @@ export const FuelTypesManager: React.FC = () => {
   const [formData, setFormData] = useState<FuelTypePayload>({ name: '', typeCode: '', description: '' });
   const [submitting, setSubmitting] = useState(false);
 
-  const fetchFuelTypes = async () => {
-    try {
-      const effectiveSize = pageSize === -1 ? 1000 : pageSize;
-      const res = await getFuelTypes(page, effectiveSize);
-      setFuelTypes(res.data?.content || []);
-      setTotalPages(res.data?.totalPages || 0);
-      setTotalElements(res.data?.totalElements || 0);
-    } catch (err: any) {
-      setError('Failed to load fuel types.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // State is set only in the promise callbacks (react-hooks/set-state-in-effect).
+  const fetchFuelTypes = useCallback(() =>
+    getFuelTypes(page, pageSize === -1 ? 1000 : pageSize)
+      .then(res => {
+        setFuelTypes(res.data?.content || []);
+        setTotalPages(res.data?.totalPages || 0);
+        setTotalElements(res.data?.totalElements || 0);
+      })
+      .catch(() => setError('Failed to load fuel types.'))
+      .finally(() => setLoading(false)),
+  [page, pageSize]);
 
   useEffect(() => {
     fetchFuelTypes();
-  }, [page, pageSize]);
+  }, [fetchFuelTypes]);
 
   const handleExport = () => {
     const ws = XLSX.utils.json_to_sheet(fuelTypes.map(ft => ({
@@ -83,8 +81,8 @@ export const FuelTypesManager: React.FC = () => {
       }
       setShowModal(false);
       await fetchFuelTypes();
-    } catch (err: any) {
-      setError(err.message || 'Operation failed.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Operation failed.');
     } finally {
       setSubmitting(false);
     }
@@ -98,7 +96,7 @@ export const FuelTypesManager: React.FC = () => {
         await activateFuelType(ft.id);
       }
       await fetchFuelTypes();
-    } catch (err: any) {
+    } catch {
       setError(`Failed to ${ft.active ? 'deactivate' : 'activate'} fuel type.`);
     }
   };

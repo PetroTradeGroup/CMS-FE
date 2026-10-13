@@ -40,8 +40,8 @@ export const RequisitionDetail: React.FC = () => {
   const requisitionId = parseInt(id || '', 10);
 
   const [requisition, setRequisition] = useState<Requisition | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(() => !Number.isNaN(requisitionId));
+  const [error, setError] = useState<string | null>(() => (Number.isNaN(requisitionId) ? 'Invalid requisition ID.' : null));
   const [success, setSuccess] = useState<string | null>(null);
   // Transfers issued by the last fulfil/auto-fulfil — each is one GIV to print and hand over
   const [issued, setIssued] = useState<ApprovalRequest[]>([]);
@@ -74,24 +74,17 @@ export const RequisitionDetail: React.FC = () => {
   const [autoFulfilling, setAutoFulfilling] = useState(false);
   const [autoFulfillError, setAutoFulfillError] = useState<string | null>(null);
 
-  const loadRequisition = useCallback(async () => {
-    try {
-      const res = await getRequisition(requisitionId);
-      setRequisition(res.data);
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load requisition.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [requisitionId]);
+  // State is set only in the promise callbacks (react-hooks/set-state-in-effect).
+  const loadRequisition = useCallback(() =>
+    getRequisition(requisitionId)
+      .then(res => setRequisition(res.data))
+      .catch(err => setError(getErrorMessage(err, 'Failed to load requisition.')))
+      .finally(() => setLoading(false)),
+  [requisitionId]);
 
+  // An invalid id is already reflected in the initial error/loading state.
   useEffect(() => {
-    if (Number.isNaN(requisitionId)) {
-      setError('Invalid requisition ID.');
-      setLoading(false);
-      return;
-    }
-    loadRequisition();
+    if (!Number.isNaN(requisitionId)) loadRequisition();
   }, [requisitionId, loadRequisition]);
 
   const openFulfill = () => {

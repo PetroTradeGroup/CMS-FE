@@ -6,6 +6,7 @@ import type { RedemptionRequest, RedemptionStatus } from '../services/redemption
 import { getLocations } from '../services/locations';
 import type { LocationDetail } from '../services/locations';
 import { ApiError, getErrorMessage } from '../services/api';
+import { useResetPage } from '../utils/useResetPage';
 import { hasRole, getLocationCode } from '../services/auth';
 import { Modal } from '../components/Modal';
 import { VerifyCouponModal } from '../components/VerifyCouponModal';
@@ -79,33 +80,29 @@ export const Redemptions: React.FC = () => {
   const [posting, setPosting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
-  const loadRequests = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await getRedemptions(
-        page,
-        20,
-        statusTab || undefined,
-        canPickSite && locationId ? Number(locationId) : undefined,
-      );
-      setRequests(res.data?.content || []);
-      setTotalPages(res.data?.totalPages || 0);
-      setTotalElements(res.data?.totalElements || 0);
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load redemption requests.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [page, statusTab, canPickSite, locationId]);
+  // State is set only in the promise callbacks (react-hooks/set-state-in-effect).
+  const loadRequests = useCallback(() =>
+    getRedemptions(
+      page,
+      20,
+      statusTab || undefined,
+      canPickSite && locationId ? Number(locationId) : undefined,
+    )
+      .then(res => {
+        setRequests(res.data?.content || []);
+        setTotalPages(res.data?.totalPages || 0);
+        setTotalElements(res.data?.totalElements || 0);
+        setError(null);
+      })
+      .catch(err => setError(getErrorMessage(err, 'Failed to load redemption requests.')))
+      .finally(() => setLoading(false)),
+  [page, statusTab, canPickSite, locationId]);
 
   useEffect(() => {
     loadRequests();
   }, [loadRequests]);
 
-  useEffect(() => {
-    setPage(0);
-  }, [statusTab, locationId]);
+  useResetPage(`${statusTab}|${locationId}`, setPage);
 
   // Redemptions now auto-post to the ERP in the background after submit, so a PENDING row can
   // flip to POSTED without anyone touching this page — poll quietly while any are visible. Manual

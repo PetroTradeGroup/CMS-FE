@@ -5,6 +5,7 @@ import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
+import type { PieLabelRenderProps, TooltipContentProps } from 'recharts';
 import { getBulkLimit } from '../services/config';
 import { canSee, hasRole } from '../services/auth';
 import type { BulkLimit } from '../services/config';
@@ -30,7 +31,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 // ─── Custom Tooltip ──────────────────────────────────────────────────────────
-const ChartTooltip = ({ active, payload, label }: any) => {
+const ChartTooltip = ({ active, payload, label }: Partial<TooltipContentProps<number, string>>) => {
   if (!active || !payload?.length) return null;
   return (
     <div style={{
@@ -42,7 +43,7 @@ const ChartTooltip = ({ active, payload, label }: any) => {
       boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
     }}>
       {label && <p style={{ color: '#fff', fontWeight: 600, marginBottom: 4 }}>{label}</p>}
-      {payload.map((entry: any, i: number) => (
+      {payload.map((entry, i) => (
         <p key={i} style={{ color: entry.color ?? GOLD, margin: 0, fontSize: '0.9rem' }}>
           {entry.name}: <strong>{entry.value?.toLocaleString()}</strong>
         </p>
@@ -52,7 +53,9 @@ const ChartTooltip = ({ active, payload, label }: any) => {
 };
 
 // ─── Pie Custom Label ────────────────────────────────────────────────────────
-const renderPieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+const renderPieLabel = (props: PieLabelRenderProps) => {
+  const [cx, cy, midAngle, innerRadius, outerRadius, percent] =
+    [props.cx, props.cy, props.midAngle, props.innerRadius, props.outerRadius, props.percent].map(Number);
   if (percent < 0.05) return null;
   const RADIAN = Math.PI / 180;
   const radius = innerRadius + (outerRadius - innerRadius) * 0.55;

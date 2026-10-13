@@ -111,7 +111,7 @@ export const AiAssistant: React.FC = () => {
       margin: { left: 14, right: 14 },
     });
 
-    y = (doc as any).lastAutoTable.finalY + 12;
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 12;
 
     doc.setTextColor(206, 166, 32);
     doc.setFontSize(12);
@@ -143,7 +143,7 @@ export const AiAssistant: React.FC = () => {
         headStyles: { fillColor: [15, 15, 30], textColor: [206, 166, 32] },
         margin: { left: 14, right: 14 },
       });
-      y = (doc as any).lastAutoTable.finalY + 12;
+      y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 12;
     }
 
     if (stats.sequenceCapacities?.length > 0) {

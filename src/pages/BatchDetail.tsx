@@ -23,7 +23,7 @@ export const BatchDetail: React.FC = () => {
   const batchId = parseInt(id || '', 10);
 
   const [batch, setBatch] = useState<CouponBatch | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !Number.isNaN(batchId));
   const [receiving, setReceiving] = useState(false);
   // Receive modal — whole batch, or a book range for a partial supplier delivery
   const [showReceive, setShowReceive] = useState(false);
@@ -33,7 +33,7 @@ export const BatchDetail: React.FC = () => {
   const [receiveError, setReceiveError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadingCsv, setDownloadingCsv] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => (Number.isNaN(batchId) ? 'Invalid batch ID.' : null));
   const [success, setSuccess] = useState<string | null>(null);
 
   // Transfer modal
@@ -63,11 +63,11 @@ export const BatchDetail: React.FC = () => {
   const [couponsPage, setCouponsPage] = useState(0);
   const [couponsTotalPages, setCouponsTotalPages] = useState(0);
   const [couponsTotal, setCouponsTotal] = useState(0);
-  const [couponsLoading, setCouponsLoading] = useState(false);
+  // Only the first load shows the spinner; later pages swap in when they land (no setState before the fetch).
+  const [couponsLoading, setCouponsLoading] = useState(true);
 
   useEffect(() => {
     if (!batch) return;
-    setCouponsLoading(true);
     getCoupons(couponsPage, 20, { batchId: batch.id }, 'batchSequence,asc')
       .then(res => {
         setCoupons(res.data?.content || []);
@@ -78,24 +78,17 @@ export const BatchDetail: React.FC = () => {
       .finally(() => setCouponsLoading(false));
   }, [batch, couponsPage]);
 
-  const loadBatch = useCallback(async () => {
-    try {
-      const res = await getBatch(batchId);
-      setBatch(res.data);
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load batch.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [batchId]);
+  // State is set only in the promise callbacks (react-hooks/set-state-in-effect).
+  const loadBatch = useCallback(() =>
+    getBatch(batchId)
+      .then(res => setBatch(res.data))
+      .catch(err => setError(getErrorMessage(err, 'Failed to load batch.')))
+      .finally(() => setLoading(false)),
+  [batchId]);
 
+  // An invalid id is already reflected in the initial error/loading state.
   useEffect(() => {
-    if (Number.isNaN(batchId)) {
-      setError('Invalid batch ID.');
-      setLoading(false);
-      return;
-    }
-    loadBatch();
+    if (!Number.isNaN(batchId)) loadBatch();
   }, [batchId, loadBatch]);
 
   const openReceive = () => {

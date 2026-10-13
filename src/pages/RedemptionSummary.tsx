@@ -82,42 +82,37 @@ export const RedemptionSummary: React.FC = () => {
       .catch(() => { /* keep whatever options we already have */ });
   }, [isTeamLeader, dateFrom, dateTo]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // State is set only in the promise callbacks (react-hooks/set-state-in-effect) — the previous
+  // numbers stay up until the new ones land.
+  const load = useCallback(() => {
     const base = {
       dateFrom,
       dateTo,
       fuelTypeId: fuelTypeId ? Number(fuelTypeId) : undefined,
     };
-    try {
-      if (isTeamLeader && attendant) {
+    const request: Promise<{ summary: Summary; byAttendant: RedemptionByAttendant | null }> =
+      isTeamLeader && attendant
         // One attendant only — their own fuel-type breakdown, nobody else's numbers fetched.
-        const res = await getRedemptionSummaryForAttendant(attendant, base);
-        setSummary(res.data);
+        ? getRedemptionSummaryForAttendant(attendant, base).then((res) => ({ summary: res.data, byAttendant: null }))
+        : isTeamLeader
+          ? Promise.all([getRedemptionSummary(base), getRedemptionByAttendant(base)])
+              .then(([sumRes, attRes]) => ({ summary: sumRes.data, byAttendant: attRes.data }))
+          : getRedemptionSummary({
+              ...base,
+              locationId: canPickSite && locationId ? Number(locationId) : undefined,
+            }).then((res) => ({ summary: res.data, byAttendant: null }));
+    return request
+      .then(({ summary, byAttendant }) => {
+        setSummary(summary);
+        setByAttendant(byAttendant);
+        setError(null);
+      })
+      .catch((err) => {
+        setError(getErrorMessage(err, 'Failed to load the redemption summary.'));
+        setSummary(null);
         setByAttendant(null);
-      } else if (isTeamLeader) {
-        const [sumRes, attRes] = await Promise.all([
-          getRedemptionSummary(base),
-          getRedemptionByAttendant(base),
-        ]);
-        setSummary(sumRes.data);
-        setByAttendant(attRes.data);
-      } else {
-        const res = await getRedemptionSummary({
-          ...base,
-          locationId: canPickSite && locationId ? Number(locationId) : undefined,
-        });
-        setSummary(res.data);
-        setByAttendant(null);
-      }
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load the redemption summary.'));
-      setSummary(null);
-      setByAttendant(null);
-    } finally {
-      setLoading(false);
-    }
+      })
+      .finally(() => setLoading(false));
   }, [dateFrom, dateTo, fuelTypeId, locationId, attendant, canPickSite, isTeamLeader]);
 
   useEffect(() => {

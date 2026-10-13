@@ -23,16 +23,12 @@ export const Departments: React.FC = () => {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
 
-  const loadDepartments = async () => {
-    try {
-      const res = await getDepartments(false); // include inactive so they can be reactivated
-      setDepartments(res.data || []);
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load departments.'));
-    } finally {
-      setLoading(false);
-    }
-  };
+  // State is set only in the promise callbacks (react-hooks/set-state-in-effect).
+  const loadDepartments = () =>
+    getDepartments(false) // include inactive so they can be reactivated
+      .then(res => setDepartments(res.data || []))
+      .catch(err => setError(getErrorMessage(err, 'Failed to load departments.')))
+      .finally(() => setLoading(false));
 
   useEffect(() => {
     loadDepartments();

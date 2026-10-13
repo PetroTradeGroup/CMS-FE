@@ -12,6 +12,7 @@ import { getLocations } from '../services/locations';
 import type { LocationDetail } from '../services/locations';
 import type { ApprovalRequest } from '../services/approvals';
 import { getErrorMessage } from '../services/api';
+import { useResetPage } from '../utils/useResetPage';
 import { Modal } from '../components/Modal';
 import { Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -93,9 +94,7 @@ export const Coupons: React.FC = () => {
   };
 
   // Reset page to 0 when filters or page size change
-  useEffect(() => {
-    setPage(0);
-  }, [statusFilter, originFilter, fuelTypeFilter, dateFrom, dateTo, pageSize, batchNumberFilter, couponNumberFilter]);
+  useResetPage(JSON.stringify([statusFilter, originFilter, fuelTypeFilter, dateFrom, dateTo, pageSize, batchNumberFilter, couponNumberFilter]), setPage);
 
   useEffect(() => {
     const fetchData = async () => {

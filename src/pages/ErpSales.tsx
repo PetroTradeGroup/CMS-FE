@@ -3,6 +3,7 @@ import { ShoppingCart, AlertCircle, AlertTriangle, X, Search, ChevronRight, Chev
 import { getSales, getSale, saleNeedsRestock, saleRequestedTotal, saleLineSummary } from '../services/erpSales';
 import type { CouponSale, SaleLine, SaleStatus } from '../services/erpSales';
 import { ApiError, getErrorMessage } from '../services/api';
+import { useResetPage } from '../utils/useResetPage';
 import { Modal } from '../components/Modal';
 
 const STATUS_TABS: { label: string; value: SaleStatus | '' }[] = [
@@ -102,29 +103,25 @@ export const ErpSales: React.FC = () => {
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
 
-  const loadSales = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await getSales(page, 20, statusTab || undefined);
-      setSales(res.data?.content || []);
-      setTotalPages(res.data?.totalPages || 0);
-      setTotalElements(res.data?.totalElements || 0);
-      setExpanded(new Set());
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load the ERP sales log.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [page, statusTab]);
+  // State is set only in the promise callbacks (react-hooks/set-state-in-effect).
+  const loadSales = useCallback(() =>
+    getSales(page, 20, statusTab || undefined)
+      .then(res => {
+        setSales(res.data?.content || []);
+        setTotalPages(res.data?.totalPages || 0);
+        setTotalElements(res.data?.totalElements || 0);
+        setExpanded(new Set());
+        setError(null);
+      })
+      .catch(err => setError(getErrorMessage(err, 'Failed to load the ERP sales log.')))
+      .finally(() => setLoading(false)),
+  [page, statusTab]);
 
   useEffect(() => {
     loadSales();
   }, [loadSales]);
 
-  useEffect(() => {
-    setPage(0);
-  }, [statusTab]);
+  useResetPage(String(statusTab), setPage);
 
   const toggleExpanded = (id: number) => {
     setExpanded(prev => {

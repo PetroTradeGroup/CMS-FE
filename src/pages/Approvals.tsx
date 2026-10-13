@@ -3,6 +3,7 @@ import { ClipboardCheck, AlertCircle, CheckCircle2, X, Printer } from 'lucide-re
 import { getApprovals, getApproval, approveRequest, confirmReceipt, rejectRequest } from '../services/approvals';
 import type { ApprovalRequest, ApprovalStatus } from '../services/approvals';
 import { ApiError, getErrorMessage } from '../services/api';
+import { useResetPage } from '../utils/useResetPage';
 import { Modal } from '../components/Modal';
 import { previewVoucher } from '../utils/grvPdf';
 import type { VoucherKind } from '../utils/grvPdf';
@@ -86,28 +87,25 @@ export const Approvals: React.FC = () => {
   const [deciding, setDeciding] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
-  const loadRequests = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await getApprovals(page, 20, statusTab || undefined);
-      setRequests(res.data?.content || []);
-      setTotalPages(res.data?.totalPages || 0);
-      setTotalElements(res.data?.totalElements || 0);
-    } catch (err) {
-      setError(getErrorMessage(err, 'Failed to load approval requests.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [page, statusTab]);
+  // State is set only in the promise callbacks (react-hooks/set-state-in-effect) — the previous page
+  // stays on screen until the new one lands.
+  const loadRequests = useCallback(() =>
+    getApprovals(page, 20, statusTab || undefined)
+      .then(res => {
+        setRequests(res.data?.content || []);
+        setTotalPages(res.data?.totalPages || 0);
+        setTotalElements(res.data?.totalElements || 0);
+        setError(null);
+      })
+      .catch(err => setError(getErrorMessage(err, 'Failed to load approval requests.')))
+      .finally(() => setLoading(false)),
+  [page, statusTab]);
 
   useEffect(() => {
     loadRequests();
   }, [loadRequests]);
 
-  useEffect(() => {
-    setPage(0);
-  }, [statusTab]);
+  useResetPage(String(statusTab), setPage);
 
   const openDetail = (req: ApprovalRequest) => {
     // Show the row's data immediately, then refresh in the background in case it
