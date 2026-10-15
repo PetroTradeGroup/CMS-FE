@@ -15,6 +15,9 @@ export const LOCATION_TYPE_LABEL: Record<LocationType, string> = {
 export interface LocationDetail extends Location {
   type: LocationType;
   address: string | null;
+  companyId: number | null; // the company running this site (never null server-side)
+  companyCode: string | null;
+  companyName: string | null;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -33,10 +36,20 @@ export const getLocations = async (active?: boolean) => {
   return { ...res, data: res.data?.content ?? [] };
 };
 
-// Raw paginated access, for a UI that wants real server-side paging.
-export const getLocationsPage = (page = 0, size = 20, sort = 'name,asc', active?: boolean) => {
+// Server-side paged + filtered access. `q` matches code or name (case-insensitive); unset filters are omitted.
+export interface LocationPageFilters {
+  active?: boolean;
+  type?: LocationType;
+  companyId?: number;
+  q?: string;
+}
+
+export const getLocationsPage = (page = 0, size = 20, sort = 'name,asc', filters: LocationPageFilters = {}) => {
   const params = new URLSearchParams({ page: String(page), size: String(size), sort });
-  if (active !== undefined) params.set('active', String(active));
+  if (filters.active !== undefined) params.set('active', String(filters.active));
+  if (filters.type) params.set('type', filters.type);
+  if (filters.companyId != null) params.set('companyId', String(filters.companyId));
+  if (filters.q?.trim()) params.set('q', filters.q.trim());
   return fetchApi<PagedResponse<LocationDetail>>(`/locations?${params.toString()}`);
 };
 
@@ -51,6 +64,7 @@ export interface CreateLocationBody {
   name: string;   // max 100
   type: LocationType;
   address?: string | null; // max 255, optional
+  companyId?: number | null; // omitted → Petrotrade
 }
 
 export const createLocation = (body: CreateLocationBody) => {
@@ -68,11 +82,21 @@ export interface UpdateLocationBody {
   type: LocationType;
   address: string | null;
   active: boolean;
+  companyId?: number | null; // omitted → keeps the current company
 }
 
 export const updateLocation = (id: number, body: UpdateLocationBody) => {
   return fetchApi<LocationDetail>(`/locations/${id}`, {
     method: 'PUT',
     body: JSON.stringify(body),
+  });
+};
+
+// PUT /api/v1/locations/{id}/company — ADMIN or REGIONAL_REP. Its redemptions report under
+// that company from then on.
+export const assignLocationCompany = (id: number, companyId: number) => {
+  return fetchApi<LocationDetail>(`/locations/${id}/company`, {
+    method: 'PUT',
+    body: JSON.stringify({ companyId }),
   });
 };

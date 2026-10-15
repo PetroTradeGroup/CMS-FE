@@ -62,7 +62,7 @@ const hasGiv = (req: ApprovalRequest) => req.status === 'TRANSFERSHIPMENT' || re
 export const Approvals: React.FC = () => {
   // Same roles the backend lets approve/reject. Everyone else (Sales Clerk, Stocks Clerk, Commercial
   // Manager) only receives or reprints vouchers, and lands on what's In Transit.
-  const canDecide = hasRole('ADMIN', 'STOCKS_CONTROLLER', 'REGIONAL_REP');
+  const canDecide = hasRole('ADMIN', 'STOCKS_CONTROLLER', 'REGIONAL_REP', 'RETAIL_MANAGER');
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

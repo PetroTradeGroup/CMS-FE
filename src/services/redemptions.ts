@@ -1,6 +1,6 @@
 import { fetchApi, API_BASE_URL } from './api';
 import type { PagedResponse } from './api';
-import type { Coupon, Location, CouponStatus, DenominationLine } from './coupons';
+import type { Coupon, Location, CouponStatus, CouponType, DenominationLine } from './coupons';
 import type { Department } from './departments';
 import type { TransferredCoupon } from './batches';
 import { getAccessToken } from './auth';
@@ -106,13 +106,28 @@ export interface RedemptionSummary {
   dateTo: string;       // end of the reported range, inclusive (ISO date)
   locationId: number | null; // the site the totals are scoped to, or null for all sites
   fuelTypeId: number | null; // the fuel type filter applied, or null for all
+  companyId: number | null; // the company filter applied, or null
+  // The company filtered on, or the company of the one site in scope; null when spanning every company.
+  companyName: string | null;
+  couponType: CouponType | null; // the coupon type filter applied, or null for both
   totalCoupons: number;
   totalLitres: number;
   byFuelType: RedemptionFuelTypeSummary[];
+  bySite: RedemptionSiteLine[]; // one line per site, with its company
+}
+
+export interface RedemptionSiteLine {
+  locationId: number;
+  locationCode: string;
+  locationName: string;
+  companyName: string;
+  count: number;
+  litres: number;
 }
 
 export interface RedemptionAttendantLine {
   requestedBy: string;
+  attendantName: string | null; // "First Last" from the attendant register, when known
   count: number;
   litres: number;
 }
@@ -138,6 +153,8 @@ export interface RedemptionSummaryParams {
   dateTo?: string;
   locationId?: number;
   fuelTypeId?: number;
+  companyId?: number; // one company's sites — ignored for station-scoped callers
+  couponType?: CouponType; // PHYSICAL or DIGITAL; omit for both
 }
 
 const dateParams = (p: RedemptionSummaryParams) => {
@@ -146,6 +163,8 @@ const dateParams = (p: RedemptionSummaryParams) => {
   if (p.dateFrom) params.set('dateFrom', p.dateFrom);
   if (p.dateTo) params.set('dateTo', p.dateTo);
   if (p.fuelTypeId) params.set('fuelTypeId', String(p.fuelTypeId));
+  if (p.companyId) params.set('companyId', String(p.companyId));
+  if (p.couponType) params.set('couponType', p.couponType);
   return params;
 };
 
@@ -161,9 +180,9 @@ export const getRedemptionSummary = (params: RedemptionSummaryParams = {}) => {
   return fetchApi<RedemptionSummary>(withQs('/redemptions/summary', qp));
 };
 
-// Per-attendant coupon count and litres over the range — Team Leader only, always their own
-// station (no locationId param). `attendantUsername` narrows to one attendant; omit for
-// everyone at the station.
+// Per-attendant coupon count and litres (with names) over the range. A Team Leader always gets
+// their own station; a Regional Rep passes locationId for one site (omit for every site).
+// `attendantUsername` narrows to one attendant.
 export interface RedemptionByAttendantParams extends RedemptionSummaryParams {
   attendantUsername?: string;
 }
@@ -171,6 +190,7 @@ export interface RedemptionByAttendantParams extends RedemptionSummaryParams {
 export const getRedemptionByAttendant = (params: RedemptionByAttendantParams = {}) => {
   const qp = dateParams(params);
   if (params.attendantUsername) qp.set('attendantUsername', params.attendantUsername);
+  if (params.locationId) qp.set('locationId', String(params.locationId));
   return fetchApi<RedemptionByAttendant>(withQs('/redemptions/summary/by-attendant', qp));
 };
 
@@ -353,3 +373,58 @@ export const getBalanceTrend = (params: { dateFrom?: string; dateTo?: string; fu
   if (params.fuelTypeId) qp.set('fuelTypeId', String(params.fuelTypeId));
   return fetchApi<BalanceTrendPoint[]>(withQs('/inventory/balance/trend', qp));
 };
+
+// ── Redemption log (GET /redemptions/log) ── ATTENDANT (own only), TEAM_LEADER (own site);
+// REGIONAL_REP, ADMIN, STOCKS_CONTROLLER (any site).
+// One row per redemption, newest first, with the exact time it was submitted.
+export interface RedemptionLogEntry {
+  id: number;
+  redeemedAt: string; // ISO date-time the attendant submitted it
+  status: RedemptionStatus;
+  postedAt: string | null; // when it reached the ERP
+  documentNumber: string | null;
+  carRegistrationNumber: string | null;
+  attendantUsername: string;
+  attendantName: string | null;
+  locationId: number | null;
+  locationCode: string | null;
+  locationName: string | null;
+  companyName: string | null;
+  couponCount: number;
+  litres: number;
+  fuelTypes: string[];
+}
+
+export interface RedemptionLogParams extends RedemptionSummaryParams {
+  attendantUsername?: string;
+}
+
+const logParams = (p: RedemptionLogParams) => {
+  const qp = dateParams(p);
+  if (p.locationId) qp.set('locationId', String(p.locationId));
+  if (p.attendantUsername) qp.set('attendantUsername', p.attendantUsername);
+  return qp;
+};
+
+export const getRedemptionLog = (params: RedemptionLogParams = {}, page = 0, size = 50) => {
+  const qp = logParams(params);
+  qp.set('page', String(page));
+  qp.set('size', String(size));
+  return fetchApi<PagedResponse<RedemptionLogEntry>>(withQs('/redemptions/log', qp));
+};
+
+// GET /redemptions/log/totals — same filters/scoping as the log, across every page. REJECTED excluded.
+export interface RedemptionLogTotals {
+  dateFrom: string;
+  dateTo: string;
+  redemptions: number;
+  coupons: number;
+  litres: number;
+}
+
+export const getRedemptionLogTotals = (params: RedemptionLogParams = {}) =>
+  fetchApi<RedemptionLogTotals>(withQs('/redemptions/log/totals', logParams(params)));
+
+export const exportRedemptionLog = (params: RedemptionLogParams = {}) =>
+  streamDownload(withQs('/redemptions/log/export/excel', logParams(params)),
+    'redemption-log.xlsx', 'Failed to export the redemption log as Excel');

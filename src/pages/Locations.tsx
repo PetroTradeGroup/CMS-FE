@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { MapPin, Plus, Pencil, AlertCircle, CheckCircle2, X, ArrowUpDown, Lock } from 'lucide-react';
 import {
-  getLocations,
+  getLocationsPage,
   createLocation,
   updateLocation,
+  assignLocationCompany,
   LOCATION_TYPES,
   LOCATION_TYPE_LABEL,
 } from '../services/locations';
@@ -11,19 +12,26 @@ import type { LocationDetail, LocationType } from '../services/locations';
 import { getErrorMessage } from '../services/api';
 import { hasRole } from '../services/auth';
 import { Modal } from '../components/Modal';
+import { useResetPage } from '../utils/useResetPage';
+import { CompaniesPanel } from '../components/CompaniesPanel';
+import { getCompanies } from '../services/companies';
+import type { Company } from '../services/companies';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 type StatusFilter = 'all' | 'active' | 'inactive';
 type SortField = 'code' | 'name' | 'type';
 
-const EMPTY_FORM = { code: '', name: '', type: 'RETAIL_SITE' as LocationType, address: '' };
+const EMPTY_FORM = { code: '', name: '', type: 'RETAIL_SITE' as LocationType, address: '', companyId: '' };
 
 export const Locations: React.FC = () => {
   // Create/update are ADMIN-only server-side; everyone authenticated can read the list.
   const isAdmin = hasRole('ADMIN');
 
-  const [all, setAll] = useState<LocationDetail[]>([]);
+  const [pageRows, setPageRows] = useState<LocationDetail[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [reloadTick, setReloadTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -41,22 +49,37 @@ export const Locations: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // The endpoint has no pagination/sort/type filter — pull the whole list once and work over it.
-  useEffect(() => {
-    getLocations()
-      .then((res) => setAll(res.data || []))
-      .catch((err) => setError(getErrorMessage(err, 'Failed to load locations.')))
-      .finally(() => setLoading(false));
-  }, []);
+  const [companyFilter, setCompanyFilter] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
 
-  const refresh = () => {
-    setLoading(true);
-    setError(null);
-    getLocations()
-      .then((res) => setAll(res.data || []))
+  // Wait for a pause in typing before hitting the server.
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  // Paging, sorting and filtering all happen server-side, so this scales past any site count.
+  const filterKey = JSON.stringify([statusFilter, typeFilter, companyFilter, search, sortField, sortDir, pageSize]);
+  useResetPage(filterKey, setPage);
+  useEffect(() => {
+    getLocationsPage(page, pageSize, `${sortField},${sortDir}`, {
+      active: statusFilter === 'all' ? undefined : statusFilter === 'active',
+      type: typeFilter || undefined,
+      companyId: companyFilter ? Number(companyFilter) : undefined,
+      q: search,
+    })
+      .then((res) => {
+        setPageRows(res.data?.content ?? []);
+        setTotal(res.data?.totalElements ?? 0);
+        setTotalPages(Math.max(1, res.data?.totalPages ?? 1));
+        setError(null);
+      })
       .catch((err) => setError(getErrorMessage(err, 'Failed to load locations.')))
       .finally(() => setLoading(false));
-  };
+  }, [page, pageSize, sortField, sortDir, statusFilter, typeFilter, companyFilter, search, reloadTick]);
+
+  const refresh = () => setReloadTick((t) => t + 1);
 
   const flash = (message: string) => {
     setSuccess(message);
@@ -64,40 +87,40 @@ export const Locations: React.FC = () => {
     setTimeout(() => setSuccess(null), 4000);
   };
 
-  const filtered = useMemo(() => {
-    const dir = sortDir === 'asc' ? 1 : -1;
-    return all
-      .filter((l) => (statusFilter === 'all' ? true : statusFilter === 'active' ? l.active : !l.active))
-      .filter((l) => (typeFilter ? l.type === typeFilter : true))
-      .sort((a, b) => String(a[sortField]).localeCompare(String(b[sortField])) * dir);
-  }, [all, statusFilter, typeFilter, sortField, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Companies: Admin and Regional Rep manage them and pick each site's company inline.
+  const canManageCompanies = hasRole('ADMIN', 'REGIONAL_REP', 'RETAIL_MANAGER');
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const loadCompanies = () => getCompanies().then((res) => setCompanies(res.data || [])).catch(() => setCompanies([]));
+  useEffect(() => {
+    getCompanies().then((res) => setCompanies(res.data || [])).catch(() => setCompanies([]));
+  }, []);
   const safePage = Math.min(page, totalPages - 1);
-  const rangeStart = filtered.length === 0 ? 0 : safePage * pageSize + 1;
-  const rangeEnd = Math.min(filtered.length, (safePage + 1) * pageSize);
-  const pageRows = filtered.slice(safePage * pageSize, safePage * pageSize + pageSize);
+  const rangeStart = total === 0 ? 0 : safePage * pageSize + 1;
+  const rangeEnd = Math.min(total, (safePage + 1) * pageSize);
 
-  const changeStatus = (v: StatusFilter) => { setStatusFilter(v); setPage(0); };
-  const changeType = (v: '' | LocationType) => { setTypeFilter(v); setPage(0); };
-  const changePageSize = (v: number) => { setPageSize(v); setPage(0); };
+  const changeStatus = (v: StatusFilter) => setStatusFilter(v);
+  const changeType = (v: '' | LocationType) => setTypeFilter(v);
+  const changeCompany = (v: string) => setCompanyFilter(v);
+  const changeSearch = (v: string) => setSearchInput(v);
+  const changePageSize = (v: number) => setPageSize(v);
   const toggleSort = (field: SortField) => {
     if (field === sortField) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortField(field); setSortDir('asc'); }
-    setPage(0);
   };
   const sortIndicator = (field: SortField) => (sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '');
 
   const openCreate = () => {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    // Default to Petrotrade (the server's default too) so the common case is one click.
+    const petrotrade = companies.find((c) => c.code === 'PETROTRADE');
+    setForm({ ...EMPTY_FORM, companyId: petrotrade ? String(petrotrade.id) : '' });
     setFormError(null);
     setModalOpen(true);
   };
 
   const openEdit = (loc: LocationDetail) => {
     setEditing(loc);
-    setForm({ code: loc.code, name: loc.name, type: loc.type, address: loc.address ?? '' });
+    setForm({ code: loc.code, name: loc.name, type: loc.type, address: loc.address ?? '', companyId: loc.companyId != null ? String(loc.companyId) : '' });
     setFormError(null);
     setModalOpen(true);
   };
@@ -106,13 +129,19 @@ export const Locations: React.FC = () => {
     e.preventDefault();
     setSaving(true);
     setFormError(null);
+    const companyId = form.companyId ? Number(form.companyId) : null;
     try {
-      if (editing) {
+      if (editing && !isAdmin) {
+        // Regional Rep: only the company is editable for them.
+        if (companyId != null) await assignLocationCompany(editing.id, companyId);
+        flash(`${editing.name} company updated.`);
+      } else if (editing) {
         await updateLocation(editing.id, {
           name: form.name.trim(),
           type: form.type,
           address: form.address.trim() || null,
           active: editing.active,
+          companyId,
         });
         flash(`Location "${form.name.trim()}" updated.`);
       } else {
@@ -121,6 +150,7 @@ export const Locations: React.FC = () => {
           name: form.name.trim(),
           type: form.type,
           address: form.address.trim() || null,
+          companyId,
         });
         flash(`Location "${form.name.trim()}" created.`);
       }
@@ -165,9 +195,13 @@ export const Locations: React.FC = () => {
 
       {!isAdmin && (
         <div style={{ padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--color-border)', borderRadius: '8px', color: 'var(--color-text-muted)', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-          <Lock size={15} /> Read-only — creating and editing locations needs the Admin role.
+          <Lock size={15} /> {canManageCompanies
+            ? 'Creating and editing locations needs the Admin role — you can manage companies and change a site\'s company.'
+            : 'Read-only — creating and editing locations needs the Admin role.'}
         </div>
       )}
+
+      {canManageCompanies && <CompaniesPanel companies={companies} onChange={loadCompanies} />}
 
       {error && (
         <div style={{ padding: '1rem', background: 'rgba(208, 76, 87, 0.1)', border: '1px solid var(--color-accent-red)', borderRadius: '8px', color: 'var(--color-accent-red)', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -198,6 +232,19 @@ export const Locations: React.FC = () => {
             ))}
           </select>
         </div>
+        <div className="input-group" style={{ marginBottom: 0, width: '200px' }}>
+          <label>Company</label>
+          <select className="input-field" value={companyFilter} onChange={(e) => changeCompany(e.target.value)}>
+            <option value="">All</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="input-group" style={{ marginBottom: 0, width: '240px' }}>
+          <label>Search</label>
+          <input className="input-field" value={searchInput} onChange={(e) => changeSearch(e.target.value)} placeholder="Code or name" />
+        </div>
       </div>
 
       <div className="glass-panel" style={{ overflow: 'hidden' }}>
@@ -217,9 +264,10 @@ export const Locations: React.FC = () => {
                   <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('type')}>
                     Type{sortIndicator('type')} <ArrowUpDown size={11} style={{ verticalAlign: 'middle', opacity: 0.5 }} />
                   </th>
+                  <th>Company</th>
                   <th>Address</th>
                   <th>Status</th>
-                  {isAdmin && <th style={{ textAlign: 'right' }}>Actions</th>}
+                  {canManageCompanies && <th style={{ textAlign: 'right' }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -228,25 +276,26 @@ export const Locations: React.FC = () => {
                     <td style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--color-accent-gold)' }}>{loc.code}</td>
                     <td>{loc.name}</td>
                     <td>{LOCATION_TYPE_LABEL[loc.type] ?? loc.type}</td>
+                    <td>{loc.companyName || '—'}</td>
                     <td style={{ color: 'var(--color-text-muted)' }}>{loc.address || '—'}</td>
                     <td>
                       <span className={`badge ${loc.active ? 'badge-success' : 'badge-danger'}`}>
                         {loc.active ? 'ACTIVE' : 'INACTIVE'}
                       </span>
                     </td>
-                    {isAdmin && (
+                    {canManageCompanies && (
                       <td style={{ textAlign: 'right' }}>
                         <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
                           <button className="btn btn-secondary" style={{ padding: '0.35rem 0.8rem', fontSize: '0.8rem' }} onClick={() => openEdit(loc)}>
-                            <Pencil size={14} /> Edit
+                            <Pencil size={14} /> {isAdmin ? 'Edit' : 'Change company'}
                           </button>
-                          <button
+                          {isAdmin && <button
                             className="btn btn-secondary"
                             style={{ padding: '0.35rem 0.8rem', fontSize: '0.8rem', color: loc.active ? 'var(--color-accent-red)' : '#4ade80' }}
                             onClick={() => handleToggleActive(loc)}
                           >
                             {loc.active ? 'Deactivate' : 'Activate'}
-                          </button>
+                          </button>}
                         </div>
                       </td>
                     )}
@@ -261,7 +310,7 @@ export const Locations: React.FC = () => {
               <MapPin size={48} style={{ margin: '0 auto' }} />
             </div>
             <h3>No locations</h3>
-            <p>{all.length > 0 ? 'No locations match the current filters.' : 'Nothing here yet.'}</p>
+            <p>No locations match the current filters.</p>
           </div>
         )}
       </div>
@@ -269,10 +318,9 @@ export const Locations: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
           <span>
-            {filtered.length === 0
+            {total === 0
               ? 'No locations'
-              : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${filtered.length.toLocaleString()}`}
-            {filtered.length !== all.length ? ` (filtered from ${all.length})` : ''}
+              : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${total.toLocaleString()}`}
           </span>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             Rows
@@ -345,6 +393,7 @@ export const Locations: React.FC = () => {
                 maxLength={100}
                 placeholder="Station 9"
                 required
+                disabled={!isAdmin}
               />
             </div>
             <div className="input-group">
@@ -354,9 +403,25 @@ export const Locations: React.FC = () => {
                 className="input-field"
                 value={form.type}
                 onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as LocationType }))}
+                disabled={!isAdmin}
               >
                 {LOCATION_TYPES.map((t) => (
                   <option key={t} value={t}>{LOCATION_TYPE_LABEL[t]}</option>
+                ))}
+              </select>
+            </div>
+            <div className="input-group">
+              <label htmlFor="loc-company">Company (who runs this site)</label>
+              <select
+                id="loc-company"
+                className="input-field"
+                value={form.companyId}
+                onChange={(e) => setForm((f) => ({ ...f, companyId: e.target.value }))}
+                required
+              >
+                <option value="" disabled>Select a company…</option>
+                {companies.filter((c) => c.active || String(c.id) === form.companyId).map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
             </div>
@@ -369,6 +434,7 @@ export const Locations: React.FC = () => {
                 onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
                 maxLength={255}
                 placeholder="123 Samora Machel Ave, Harare"
+                disabled={!isAdmin}
               />
             </div>
             <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={saving}>

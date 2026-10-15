@@ -72,7 +72,7 @@ const renderPieLabel = (props: PieLabelRenderProps) => {
 // ─── Component ───────────────────────────────────────────────────────────────
 export const Dashboard: React.FC = () => {
   // Regional Rep gets In Stock / Redeemed / Fuel Types cards plus the two charts only.
-  const isRegionalRep = hasRole('REGIONAL_REP') && !hasRole('ADMIN');
+  const isRegionalRep = hasRole('REGIONAL_REP', 'RETAIL_MANAGER') && !hasRole('ADMIN');
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     totalCoupons: 0,

@@ -33,11 +33,11 @@ export const Redemptions: React.FC = () => {
   // site via the picker below; everyone else is locked to their own station server-side.
   const stationCode = getLocationCode();
   const isTeamLeader = hasRole('TEAM_LEADER');
-  const canPickSite = hasRole('ADMIN', 'STOCKS_CONTROLLER', 'STOCKS_CLERK', 'REGIONAL_REP') && !stationCode;
+  const canPickSite = hasRole('ADMIN', 'STOCKS_CONTROLLER', 'STOCKS_CLERK', 'REGIONAL_REP', 'RETAIL_MANAGER') && !stationCode;
   // Station staff don't need the Status / Actions columns on the Posted and All tabs.
   const isStationStaff = hasRole('ATTENDANT', 'TEAM_LEADER');
   // Regional Rep is view-only — no Post.
-  const canPost = !hasRole('REGIONAL_REP') || hasRole('ADMIN');
+  const canPost = !hasRole('REGIONAL_REP', 'RETAIL_MANAGER') || hasRole('ADMIN');
 
   const [requests, setRequests] = useState<RedemptionRequest[]>([]);
   const [loading, setLoading] = useState(true);

@@ -10,9 +10,13 @@ import {
 } from '../services/redemptions';
 import type { RedemptionSummary as Summary, RedemptionByAttendant, RedemptionSummaryExportFormat } from '../services/redemptions';
 import { getLocations } from '../services/locations';
+import { getCompanies } from '../services/companies';
+import type { Company } from '../services/companies';
+import { RedemptionLog } from '../components/RedemptionLog';
 import type { LocationDetail } from '../services/locations';
 import { getActiveFuelTypes } from '../services/fuelTypes';
 import type { FuelType } from '../services/fuelTypes';
+import type { CouponType } from '../services/coupons';
 import { getErrorMessage } from '../services/api';
 import { hasRole, getLocationCode } from '../services/auth';
 
@@ -38,14 +42,20 @@ export const RedemptionSummary: React.FC = () => {
   // station server-side. Only Admin/Stocks (no claim) may look across sites. The by-attendant
   // breakdown is Team-Leader-only on the backend (Admin gets 403 there).
   const stationCode = getLocationCode();
-  const isAdmin = hasRole('ADMIN', 'STOCKS_CONTROLLER', 'STOCKS_CLERK', 'REGIONAL_REP'); // back office — may pick any site
+  const isAdmin = hasRole('ADMIN', 'STOCKS_CONTROLLER', 'STOCKS_CLERK', 'REGIONAL_REP', 'RETAIL_MANAGER'); // back office — may pick any site
   const isTeamLeader = hasRole('TEAM_LEADER');
   const canPickSite = isAdmin && !stationCode;
+  // The Regional Rep also gets each site's attendants (with names) and the live redemption log.
+  const isRep = hasRole('REGIONAL_REP', 'RETAIL_MANAGER') && !stationCode;
+  const canSeeLog = hasRole('ATTENDANT', 'TEAM_LEADER', 'REGIONAL_REP', 'RETAIL_MANAGER', 'ADMIN', 'STOCKS_CONTROLLER');
 
   const [dateFrom, setDateFrom] = useState(todayISO());
   const [dateTo, setDateTo] = useState(todayISO());
+  const [companyId, setCompanyId] = useState<number | ''>('');
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [locationId, setLocationId] = useState<number | ''>('');
   const [fuelTypeId, setFuelTypeId] = useState<number | ''>('');
+  const [couponType, setCouponType] = useState<'' | CouponType>('');
   const [attendant, setAttendant] = useState('');
   const forOneAttendant = isTeamLeader && attendant !== '';
 
@@ -67,8 +77,16 @@ export const RedemptionSummary: React.FC = () => {
     getActiveFuelTypes(0, 100).then((res) => setFuelTypes(res.data?.content || [])).catch(() => setFuelTypes([]));
     if (canPickSite) {
       getLocations(true).then((res) => setSites(res.data || [])).catch(() => setSites([]));
+      getCompanies().then((res) => setCompanies(res.data || [])).catch(() => setCompanies([]));
     }
   }, [canPickSite]);
+
+  // Picking a company narrows the station list to its sites; a station from another company is cleared.
+  const sitesInCompany = companyId ? sites.filter((s) => s.companyId === companyId) : sites;
+  const onCompanyChange = (id: number | '') => {
+    setCompanyId(id);
+    if (id && locationId && sites.find((s) => s.id === locationId)?.companyId !== id) setLocationId('');
+  };
 
   // Keep the attendant picker populated from the unfiltered station-wide list, independent of
   // which attendant is currently selected.
@@ -89,6 +107,7 @@ export const RedemptionSummary: React.FC = () => {
       dateFrom,
       dateTo,
       fuelTypeId: fuelTypeId ? Number(fuelTypeId) : undefined,
+      couponType: couponType || undefined,
     };
     const request: Promise<{ summary: Summary; byAttendant: RedemptionByAttendant | null }> =
       isTeamLeader && attendant
@@ -97,10 +116,15 @@ export const RedemptionSummary: React.FC = () => {
         : isTeamLeader
           ? Promise.all([getRedemptionSummary(base), getRedemptionByAttendant(base)])
               .then(([sumRes, attRes]) => ({ summary: sumRes.data, byAttendant: attRes.data }))
-          : getRedemptionSummary({
-              ...base,
-              locationId: canPickSite && locationId ? Number(locationId) : undefined,
-            }).then((res) => ({ summary: res.data, byAttendant: null }));
+          : Promise.all([
+              getRedemptionSummary({
+                ...base,
+                locationId: canPickSite && locationId ? Number(locationId) : undefined,
+                companyId: canPickSite && companyId ? Number(companyId) : undefined,
+              }),
+              // A Regional Rep sees who redeemed at the chosen site.
+              isRep && locationId ? getRedemptionByAttendant({ ...base, locationId: Number(locationId) }) : null,
+            ]).then(([sumRes, attRes]) => ({ summary: sumRes.data, byAttendant: attRes?.data ?? null }));
     return request
       .then(({ summary, byAttendant }) => {
         setSummary(summary);
@@ -113,7 +137,7 @@ export const RedemptionSummary: React.FC = () => {
         setByAttendant(null);
       })
       .finally(() => setLoading(false));
-  }, [dateFrom, dateTo, fuelTypeId, locationId, attendant, canPickSite, isTeamLeader]);
+  }, [dateFrom, dateTo, fuelTypeId, couponType, locationId, companyId, attendant, canPickSite, isTeamLeader, isRep]);
 
   useEffect(() => {
     load();
@@ -137,6 +161,7 @@ export const RedemptionSummary: React.FC = () => {
       dateFrom,
       dateTo,
       fuelTypeId: fuelTypeId ? Number(fuelTypeId) : undefined,
+      couponType: couponType || undefined,
     };
     try {
       if (forOneAttendant) {
@@ -145,6 +170,7 @@ export const RedemptionSummary: React.FC = () => {
         await exportRedemptionSummary(format, {
           ...base,
           locationId: canPickSite && locationId ? Number(locationId) : undefined,
+          companyId: canPickSite && companyId ? Number(companyId) : undefined,
         });
       }
     } catch (err) {
@@ -154,13 +180,15 @@ export const RedemptionSummary: React.FC = () => {
     }
   };
 
-  const scopeLabel = stationCode
+  const baseScope = stationCode
     ? isTeamLeader
       ? `Station ${stationCode}${attendant ? ` — ${attendant}` : ' — every attendant'}`
       : `Your redemptions at ${stationCode}`
     : canPickSite && locationId
       ? sites.find((s) => s.id === Number(locationId))?.name ?? 'Selected site'
-      : 'All sites';
+      : companyId ? 'All its sites' : 'All sites';
+  // Every scope names its company — the station's own for station staff, the picked one for the Rep.
+  const scopeLabel = summary?.companyName ? `${summary.companyName} · ${baseScope}` : baseScope;
 
   const headlineCoupons = summary?.totalCoupons ?? 0;
   const headlineLitres = summary?.totalLitres ?? 0;
@@ -227,6 +255,14 @@ export const RedemptionSummary: React.FC = () => {
             ))}
           </select>
         </div>
+        <div className="input-group" style={{ marginBottom: 0, width: '170px' }}>
+          <label htmlFor="rs-ctype">Coupon type</label>
+          <select id="rs-ctype" className="input-field" value={couponType} onChange={(e) => setCouponType(e.target.value as '' | CouponType)}>
+            <option value="">Physical &amp; digital</option>
+            <option value="PHYSICAL">Physical</option>
+            <option value="DIGITAL">Digital</option>
+          </select>
+        </div>
         {isTeamLeader && (
           <div className="input-group" style={{ marginBottom: 0, width: '220px' }}>
             <label htmlFor="rs-att">Attendant</label>
@@ -239,11 +275,22 @@ export const RedemptionSummary: React.FC = () => {
           </div>
         )}
         {canPickSite && (
+          <div className="input-group" style={{ marginBottom: 0, width: '200px' }}>
+            <label htmlFor="rs-company">Company</label>
+            <select id="rs-company" className="input-field" value={companyId} onChange={(e) => onCompanyChange(e.target.value ? Number(e.target.value) : '')}>
+              <option value="">All companies</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {canPickSite && (
           <div className="input-group" style={{ marginBottom: 0, width: '240px' }}>
             <label htmlFor="rs-site">Station</label>
             <select id="rs-site" className="input-field" value={locationId} onChange={(e) => setLocationId(e.target.value ? Number(e.target.value) : '')}>
-              <option value="">All sites</option>
-              {sites.map((s) => (
+              <option value="">{companyId ? 'All its sites' : 'All sites'}</option>
+              {sitesInCompany.map((s) => (
                 <option key={s.id} value={s.id}>{s.code} — {s.name}</option>
               ))}
             </select>
@@ -334,7 +381,46 @@ export const RedemptionSummary: React.FC = () => {
             </div>
           </div>
 
-          {isTeamLeader && !attendant && byAttendant && (
+          {canPickSite && !locationId && summary.bySite.length > 0 && (
+            <>
+              <h3 style={{ margin: '2rem 0 0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Building2 size={16} /> By site
+              </h3>
+              <div className="glass-panel" style={{ overflow: 'hidden', marginBottom: '2rem' }}>
+                <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Company</th>
+                        <th>Site</th>
+                        <th style={{ textAlign: 'right' }}>Coupons</th>
+                        <th style={{ textAlign: 'right' }}>Litres</th>
+                        <th style={{ textAlign: 'right' }}>Detail</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.bySite.map((s) => (
+                        <tr key={s.locationId}>
+                          <td style={{ color: 'var(--color-text-muted)' }}>{s.companyName}</td>
+                          <td style={{ fontWeight: 600 }}>{s.locationCode} — {s.locationName}</td>
+                          <td style={{ textAlign: 'right' }}>{fmt(s.count)}</td>
+                          <td style={{ textAlign: 'right' }}>{fmt(s.litres)}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button className="btn btn-secondary" style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }}
+                              onClick={() => setLocationId(s.locationId)}>
+                              Open
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+
+          {((isTeamLeader && !attendant) || isRep) && byAttendant && (
             <>
               <h3 style={{ margin: '0 0 0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <Users size={16} /> By attendant
@@ -346,26 +432,30 @@ export const RedemptionSummary: React.FC = () => {
                       <thead>
                         <tr>
                           <th>Attendant</th>
+                          <th>Username</th>
                           <th style={{ textAlign: 'right' }}>Coupons</th>
                           <th style={{ textAlign: 'right' }}>Litres</th>
-                          <th style={{ textAlign: 'right' }}>Report</th>
+                          {isTeamLeader && <th style={{ textAlign: 'right' }}>Report</th>}
                         </tr>
                       </thead>
                       <tbody>
                         {byAttendant.byAttendant.map((a) => (
                           <tr key={a.requestedBy}>
-                            <td style={{ fontWeight: 600 }}>{a.requestedBy}</td>
+                            <td style={{ fontWeight: 600 }}>{a.attendantName ?? '—'}</td>
+                            <td style={{ fontFamily: 'monospace', color: 'var(--color-text-muted)' }}>{a.requestedBy}</td>
                             <td style={{ textAlign: 'right' }}>{fmt(a.count)}</td>
                             <td style={{ textAlign: 'right' }}>{fmt(a.litres)}</td>
-                            <td style={{ textAlign: 'right' }}>
-                              <button
-                                className="btn btn-secondary"
-                                style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }}
-                                onClick={() => setAttendant(a.requestedBy)}
-                              >
-                                Open
-                              </button>
-                            </td>
+                            {isTeamLeader && (
+                              <td style={{ textAlign: 'right' }}>
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }}
+                                  onClick={() => setAttendant(a.requestedBy)}
+                                >
+                                  Open
+                                </button>
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -392,6 +482,21 @@ export const RedemptionSummary: React.FC = () => {
             </p>
           )}
         </>
+      )}
+
+      {/* Includes redemptions still waiting on the ERP, which the posted totals above don't count yet. */}
+      {canSeeLog && (
+        <RedemptionLog
+          showSite={!stationCode}
+          params={{
+            dateFrom,
+            dateTo,
+            companyId: canPickSite && companyId ? Number(companyId) : undefined,
+            locationId: canPickSite && locationId ? Number(locationId) : undefined,
+            attendantUsername: isTeamLeader && attendant ? attendant : undefined,
+            couponType: couponType || undefined,
+          }}
+        />
       )}
     </div>
   );

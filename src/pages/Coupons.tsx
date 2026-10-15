@@ -5,7 +5,7 @@ import {
   getCoupons, transitionCoupons, getCouponHistory, COUPON_STATUSES, ALLOWED_TRANSITIONS,
   getStatusBadgeClass, formatDenomination, getOriginBadgeClass, formatOrigin
 } from '../services/coupons';
-import type { Coupon, CouponStatus, CouponOrigin, CouponMovement, TransitionResult } from '../services/coupons';
+import type { Coupon, CouponStatus, CouponOrigin, CouponType, CouponMovement, TransitionResult } from '../services/coupons';
 import { getFuelTypes } from '../services/fuelTypes';
 import type { FuelType } from '../services/fuelTypes';
 import { getLocations } from '../services/locations';
@@ -34,6 +34,7 @@ export const Coupons: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [originFilter, setOriginFilter] = useState<CouponOrigin | ''>('');
+  const [couponTypeFilter, setCouponTypeFilter] = useState<CouponType | ''>('');
   const [fuelTypeFilter, setFuelTypeFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -94,7 +95,7 @@ export const Coupons: React.FC = () => {
   };
 
   // Reset page to 0 when filters or page size change
-  useResetPage(JSON.stringify([statusFilter, originFilter, fuelTypeFilter, dateFrom, dateTo, pageSize, batchNumberFilter, couponNumberFilter]), setPage);
+  useResetPage(JSON.stringify([statusFilter, originFilter, couponTypeFilter, fuelTypeFilter, dateFrom, dateTo, pageSize, batchNumberFilter, couponNumberFilter]), setPage);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -108,6 +109,7 @@ export const Coupons: React.FC = () => {
         const filters = {
           status: statusFilter || undefined,
           origin: originFilter || undefined,
+          couponType: couponTypeFilter || undefined,
           fuelTypeId: fuelTypeFilter || undefined,
           dateFrom: dateFrom || undefined,
           dateTo: dateTo || undefined,
@@ -154,7 +156,7 @@ export const Coupons: React.FC = () => {
     };
 
     fetchData();
-  }, [page, statusFilter, originFilter, fuelTypeFilter, dateFrom, dateTo, pageSize, refreshKey, batchNumberFilter, couponNumberFilter]);
+  }, [page, statusFilter, originFilter, couponTypeFilter, fuelTypeFilter, dateFrom, dateTo, pageSize, refreshKey, batchNumberFilter, couponNumberFilter]);
 
   const handleExport = async () => {
     setExporting(true);
@@ -167,6 +169,7 @@ export const Coupons: React.FC = () => {
         const filters = {
           status: statusFilter || undefined,
           origin: originFilter || undefined,
+          couponType: couponTypeFilter || undefined,
           fuelTypeId: fuelTypeFilter || undefined,
           dateFrom: dateFrom || undefined,
           dateTo: dateTo || undefined,
@@ -387,6 +390,19 @@ export const Coupons: React.FC = () => {
                 <option value="">All Origins</option>
                 <option value="GENERATED">Generated</option>
                 <option value="LEGACY_IMPORT">Legacy Import</option>
+              </select>
+            </div>
+
+            <div className="input-group" style={{ width: '160px', marginBottom: 0 }}>
+              <label style={{ fontSize: '0.8rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Coupon Type</label>
+              <select
+                className="input-field"
+                value={couponTypeFilter}
+                onChange={(e) => setCouponTypeFilter(e.target.value as CouponType | '')}
+              >
+                <option value="">All Types</option>
+                <option value="PHYSICAL">Physical</option>
+                <option value="DIGITAL">Digital</option>
               </select>
             </div>
 

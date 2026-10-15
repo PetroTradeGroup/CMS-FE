@@ -44,7 +44,8 @@ const ROLE_PAGES: Record<string, string[]> = {
   FINANCE: ['/dashboard', '/erp-sales'], // Dashboard without Recent Coupons (see Dashboard.tsx)
   // Cut-down Dashboard (see Dashboard.tsx), redemptions across all sites, and the Report page.
   // Also gives Commercial's first approval on requisitions, alongside the Commercial Manager.
-  REGIONAL_REP: ['/dashboard', '/redemptions', '/redemptions/summary', '/ai', '/requisitions/*'],
+  REGIONAL_REP: ['/dashboard', '/redemptions', '/redemptions/summary', '/ai', '/requisitions/*', '/locations'],
+  RETAIL_MANAGER: ['/dashboard', '/redemptions', '/redemptions/summary', '/ai', '/requisitions/*', '/locations'], // supervises the Reps — same pages
   // Only their own work: raises requisitions, and confirms receipt (GRV) of what Stocks issued
   // against them — both on SalesDashboard.tsx. The backend scopes both lists to the caller.
   SALES_CLERK: ['/dashboard', '/requisitions/*'],
@@ -53,7 +54,7 @@ const ROLE_PAGES: Record<string, string[]> = {
 };
 
 // Commercial's first sign-off on a requisition (backend: 403 otherwise).
-export const isCommercialApprover = (): boolean => hasRole('COMMERCIAL_MANAGER', 'REGIONAL_REP');
+export const isCommercialApprover = (): boolean => hasRole('COMMERCIAL_MANAGER', 'REGIONAL_REP', 'RETAIL_MANAGER');
 
 // Only a Sales Clerk may confirm receipt on a requisition's issue (backend: 403 otherwise).
 export const canReceiveRequisitionIssue = (): boolean => hasRole('SALES_CLERK');
@@ -85,7 +86,7 @@ export const getDepartmentCode = (): string | null =>
 // site — the backend lets them assert a site explicitly, everyone else is locked to this one.
 // A Regional Rep spans every site, so any locationCode on their token is ignored.
 export const getLocationCode = (): string | null =>
-  hasRole('REGIONAL_REP') ? null : (keycloak.tokenParsed?.locationCode as string | undefined) ?? null;
+  hasRole('REGIONAL_REP', 'RETAIL_MANAGER') ? null : (keycloak.tokenParsed?.locationCode as string | undefined) ?? null;
 
 // Called by fetchApi on a 401 to silently obtain a fresh access token before forcing a
 // re-login. keycloak-js serializes concurrent updateToken() calls internally, so racing

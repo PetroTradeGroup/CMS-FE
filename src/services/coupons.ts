@@ -88,6 +88,7 @@ export interface CouponFilters {
   fuelTypeId?: string | number;
   status?: string;
   origin?: CouponOrigin;
+  couponType?: CouponType; // PHYSICAL or DIGITAL; omit for both
   couponNumber?: string; // partial, case-insensitive; matches anywhere in the number. Server-side.
   batchNumber?: string; // exact match, case-insensitive, whitespace-trimmed server-side
   batchId?: number; // for screens that already hold the internal ID (batch detail)
@@ -262,6 +263,7 @@ export const getCoupons = (page = 0, size = 20, filters?: CouponFilters, sort?: 
     if (filters.fuelTypeId) url += `&fuelTypeId=${filters.fuelTypeId}`;
     if (filters.status) url += `&status=${filters.status}`;
     if (filters.origin) url += `&origin=${filters.origin}`;
+    if (filters.couponType) url += `&couponType=${filters.couponType}`;
     if (filters.couponNumber) url += `&couponNumber=${encodeURIComponent(filters.couponNumber.trim())}`;
     if (filters.batchNumber) url += `&batchNumber=${encodeURIComponent(filters.batchNumber.trim())}`;
     if (filters.batchId) url += `&batchId=${filters.batchId}`;
